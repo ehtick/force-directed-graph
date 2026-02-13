@@ -56,6 +56,19 @@ export const getIndex = `
 `;
 
 /**
+ * Convert a texture index into texture UV space.
+ * Relies on uniforms:
+ * - float size
+ */
+export const getUVFromIndex = `
+  vec2 getUVFromIndex( float i ) {
+    float uvx = mod( i, size ) / size;
+    float uvy = floor( i / size ) / size;
+    return vec2( uvx, uvy );
+  }
+`;
+
+/**
  * GLSL version of a random float generator
  */
 export const random = `
@@ -93,7 +106,7 @@ export const jiggle = `
  * - float springLength: number
  */
 export const link = `
-  vec3 link( float i, int id1, vec3 p1, vec3 v1, vec2 uv2 ) {
+  vec3 link( int id1, vec2 uv2 ) {
 
     vec3 result = vec3( 0.0 );
 

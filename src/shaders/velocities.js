@@ -2,6 +2,7 @@ import {
   getPosition,
   getVelocity,
   getIndex,
+  getUVFromIndex,
   random,
   jiggle,
   link,
@@ -30,10 +31,12 @@ export const simplex = `
   uniform float stiffness;
   uniform float gravity;
   uniform sampler2D textureLinks;
+  uniform sampler2D textureLinkRanges;
 
   ${getPosition}
   ${getVelocity}
   ${getIndex}
+  ${getUVFromIndex}
   ${random}
   ${jiggle}
   ${link}
@@ -52,28 +55,27 @@ export const simplex = `
         b = vec3( 0.0 ),
         c = vec3( 0.0 );
 
-    for ( float i = 0.0; i < max( nodeAmount, edgeAmount ); i += 1.0 ) {
+    vec4 linkRange = texture2D( textureLinkRanges, uv );
+    float linkStart = linkRange.x;
+    float linkCount = linkRange.y;
 
-      float uvx = mod( i, size ) / size;
-      float uvy = floor( i / size ) / size;
+    for ( float i = 0.0; i < edgeAmount; i += 1.0 ) {
+      if ( i >= linkCount ) {
+        break;
+      }
+      vec2 linkUV = getUVFromIndex( linkStart + i );
+      b += link( id1, linkUV );
+    }
 
-      vec2 uv2 = vec2( uvx, uvy );
-
+    for ( float i = 0.0; i < nodeAmount; i += 1.0 ) {
+      vec2 uv2 = getUVFromIndex( i );
       int id2 = getIndex( uv2 );
       vec3 v2 = getVelocity( uv2 );
       vec3 p2 = getPosition( uv2 );
-
-      if ( i < edgeAmount ) {
-        b += link( i, id1, p1, v1, uv2 );
-      }
-
-      if ( i < nodeAmount) {
-        c += charge( i, id1, p1, v1, id2, p2, v2 );
-      }
-
+      c += charge( i, id1, p1, v1, id2, p2, v2 );
     }
 
-    b *= 1.0 - step( edgeAmount, float( id1 ) );
+    b *= 1.0 - step( nodeAmount, float( id1 ) );
     c *= 1.0 - step( nodeAmount, float( id1 ) );
 
     // 4.
@@ -111,6 +113,7 @@ export const nested = `
   ${getPosition}
   ${getVelocity}
   ${getIndex}
+  ${getUVFromIndex}
   ${random}
   ${jiggle}
   ${link}
@@ -132,7 +135,7 @@ export const nested = `
     /*
     for ( float i = 0.0; i < linkAmount; i += 1.0 ) {
       // TODO: get all edges and link them
-      b += link( i, id1, p1, v1, uv2 );
+      b += link( id1, uv2 );
     }
     */
 
