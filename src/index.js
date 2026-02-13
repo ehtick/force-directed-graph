@@ -17,6 +17,73 @@ const buffers = {
   float: new Float32Array(4),
 };
 
+function buildLinkTextureData(preparedLinks, nodeAmount, size) {
+  const totalElements = size * size;
+  const linksData = new Float32Array(totalElements * 4);
+  const linkRangesData = new Float32Array(totalElements * 4);
+  const linksByNode = Array.from({ length: nodeAmount }, () => []);
+  const packedLinks = [];
+
+  for (let i = 0; i < preparedLinks.length; i++) {
+    const link = preparedLinks[i];
+    const sourceIndex = link.sourceIndex;
+    const targetIndex = link.targetIndex;
+
+    const isValid =
+      Number.isInteger(sourceIndex) &&
+      Number.isInteger(targetIndex) &&
+      sourceIndex >= 0 &&
+      targetIndex >= 0 &&
+      sourceIndex < nodeAmount &&
+      targetIndex < nodeAmount;
+
+    if (!isValid) {
+      continue;
+    }
+
+    linksByNode[sourceIndex].push(link);
+    if (targetIndex !== sourceIndex) {
+      linksByNode[targetIndex].push(link);
+    }
+  }
+
+  for (let i = 0; i < nodeAmount; i++) {
+    const rangeOffset = i * 4;
+    const incident = linksByNode[i];
+
+    linkRangesData[rangeOffset + 0] = packedLinks.length;
+    linkRangesData[rangeOffset + 1] = incident.length;
+
+    for (let j = 0; j < incident.length; j++) {
+      packedLinks.push(incident[j]);
+    }
+  }
+
+  if (packedLinks.length > totalElements) {
+    throw new Error(
+      `Packed links (${packedLinks.length}) exceed texture capacity (${totalElements}).`
+    );
+  }
+
+  for (let i = 0; i < packedLinks.length; i++) {
+    const link = packedLinks[i];
+    const sourceIndex = link.sourceIndex;
+    const targetIndex = link.targetIndex;
+    const linkOffset = i * 4;
+
+    linksData[linkOffset + 0] = (sourceIndex % size) / size;
+    linksData[linkOffset + 1] = Math.floor(sourceIndex / size) / size;
+    linksData[linkOffset + 2] = (targetIndex % size) / size;
+    linksData[linkOffset + 3] = Math.floor(targetIndex / size) / size;
+  }
+
+  return {
+    linksData,
+    linkRangesData,
+    packedLinkAmount: packedLinks.length,
+  };
+}
+
 class ForceDirectedGraph extends Group {
   ready = false;
 
@@ -95,6 +162,7 @@ class ForceDirectedGraph extends Group {
   set(data, callback) {
     const scope = this;
     let { gpgpu, registry, renderer, uniforms } = this.userData;
+    let packedLinkAmount = 0;
 
     this.ready = false;
     this.userData.data = data;
@@ -127,7 +195,7 @@ class ForceDirectedGraph extends Group {
     }
 
     // Initialize new properties
-    const size = getPotSize(Math.max(data.nodes.length, data.links.length));
+    const size = getPotSize(Math.max(data.nodes.length, data.links.length * 2));
     uniforms.size.value = size;
     gpgpu = new GPUComputationRenderer(size, size, renderer);
 
@@ -135,6 +203,7 @@ class ForceDirectedGraph extends Group {
       positions: gpgpu.createTexture(),
       velocities: gpgpu.createTexture(),
       links: gpgpu.createTexture(),
+      linkRanges: gpgpu.createTexture(),
     };
 
     const variables = {
@@ -173,6 +242,29 @@ class ForceDirectedGraph extends Group {
 
     async function fill() {
       const { workerManager } = scope.userData;
+      const preparedLinks = data.links.map((link) => {
+        const sourceIndex = registry.get(link.source);
+        const targetIndex = registry.get(link.target);
+
+        link.sourceIndex = sourceIndex;
+        link.targetIndex = targetIndex;
+
+        return {
+          ...link,
+          sourceIndex,
+          targetIndex,
+        };
+      });
+
+      const linkTextureData = buildLinkTextureData(
+        preparedLinks,
+        data.nodes.length,
+        size
+      );
+
+      textures.links.image.data.set(linkTextureData.linksData);
+      textures.linkRanges.image.data.set(linkTextureData.linkRangesData);
+      packedLinkAmount = linkTextureData.packedLinkAmount;
       
       // Initialize worker if not already done
       if (!workerManager.isReady()) {
@@ -182,32 +274,15 @@ class ForceDirectedGraph extends Group {
       // Try worker-based processing first
       if (workerManager.isReady()) {
         try {
-          // Prepare links data with registry lookups
-          const preparedLinks = data.links.map(link => {
-            const sourceIndex = registry.get(link.source);
-            const targetIndex = registry.get(link.target);
-            
-            // Store indices back on the link for later use
-            link.sourceIndex = sourceIndex;
-            link.targetIndex = targetIndex;
-            
-            return {
-              ...link,
-              sourceIndex,
-              targetIndex
-            };
-          });
-          
           const result = await workerManager.processTextures({
             nodes: data.nodes,
             links: preparedLinks,
             textureSize: size,
-            frustumSize: uniforms.frustumSize.value
+            frustumSize: uniforms.frustumSize.value,
           });
           
           // Copy results to texture data
           textures.positions.image.data.set(result.positions);
-          textures.links.image.data.set(result.links);
           
           console.log(`Texture processing completed in ${result.processingTime.toFixed(2)}ms using ${workerManager.isWasmAvailable() ? 'WASM' : 'JavaScript'}`);
           
@@ -223,63 +298,30 @@ class ForceDirectedGraph extends Group {
     }
     
     function fillMainThread() {
-      let k = 0;
-      return each(
-        textures.positions.image.data,
-        (_, i) => {
-          const x = Math.random() * 2 - 1;
-          const y = Math.random() * 2 - 1;
-          const z = Math.random() * 2 - 1;
+      return each(textures.positions.image.data, (_, i) => {
+        const k = i / 4;
+        const x = Math.random() * 2 - 1;
+        const y = Math.random() * 2 - 1;
+        const z = Math.random() * 2 - 1;
 
-          if (k < data.nodes.length) {
-            const node = data.nodes[k];
+        if (k < data.nodes.length) {
+          const node = data.nodes[k];
 
-            textures.positions.image.data[i + 0] =
-              typeof node.x !== 'undefined' ? node.x : x;
-            textures.positions.image.data[i + 1] =
-              typeof node.y !== 'undefined' ? node.y : y;
-            textures.positions.image.data[i + 2] =
-              typeof node.z !== 'undefined' ? node.z : z;
-            textures.positions.image.data[i + 3] = node.isStatic ? 1 : 0;
-          } else {
-            // Throw all outside "extraneous" nodes generated by texture far far away.
-            textures.positions.image.data[i + 0] =
-              uniforms.frustumSize.value * 10;
-            textures.positions.image.data[i + 1] =
-              uniforms.frustumSize.value * 10;
-            textures.positions.image.data[i + 2] =
-              uniforms.frustumSize.value * 10;
-            textures.positions.image.data[i + 3] =
-              uniforms.frustumSize.value * 10;
-          }
-
-          let i1, i2, uvx, uvy;
-
-          if (k < data.links.length) {
-            // Calculate uv look up for edge calculations
-            i1 = registry.get(data.links[k].source);
-            i2 = registry.get(data.links[k].target);
-
-            data.links[k].sourceIndex = i1;
-            data.links[k].targetIndex = i2;
-
-            uvx = (i1 % size) / size;
-            uvy = Math.floor(i1 / size) / size;
-
-            textures.links.image.data[i + 0] = uvx;
-            textures.links.image.data[i + 1] = uvy;
-
-            uvx = (i2 % size) / size;
-            uvy = Math.floor(i2 / size) / size;
-
-            textures.links.image.data[i + 2] = uvx;
-            textures.links.image.data[i + 3] = uvy;
-          }
-
-          k++;
-        },
-        4
-      );
+          textures.positions.image.data[i + 0] =
+            typeof node.x !== 'undefined' ? node.x : x;
+          textures.positions.image.data[i + 1] =
+            typeof node.y !== 'undefined' ? node.y : y;
+          textures.positions.image.data[i + 2] =
+            typeof node.z !== 'undefined' ? node.z : z;
+          textures.positions.image.data[i + 3] = node.isStatic ? 1 : 0;
+        } else {
+          // Throw all outside "extraneous" nodes generated by texture far far away.
+          textures.positions.image.data[i + 0] = uniforms.frustumSize.value * 10;
+          textures.positions.image.data[i + 1] = uniforms.frustumSize.value * 10;
+          textures.positions.image.data[i + 2] = uniforms.frustumSize.value * 10;
+          textures.positions.image.data[i + 3] = uniforms.frustumSize.value * 10;
+        }
+      }, 4);
     }
 
     function setup() {
@@ -305,7 +347,7 @@ class ForceDirectedGraph extends Group {
           value: data.nodes.length,
         };
         variables.velocities.material.uniforms.edgeAmount = {
-          value: data.links.length,
+          value: packedLinkAmount,
         };
         variables.velocities.material.uniforms.maxSpeed = uniforms.maxSpeed;
         variables.velocities.material.uniforms.timeStep = uniforms.timeStep;
@@ -313,6 +355,9 @@ class ForceDirectedGraph extends Group {
         variables.velocities.material.uniforms.repulsion = uniforms.repulsion;
         variables.velocities.material.uniforms.textureLinks = {
           value: textures.links,
+        };
+        variables.velocities.material.uniforms.textureLinkRanges = {
+          value: textures.linkRanges,
         };
         variables.velocities.material.uniforms.springLength =
           uniforms.springLength;
