@@ -8,6 +8,71 @@ import { instantiate } from '@assemblyscript/loader';
 let wasmModule = null;
 let wasmReady = false;
 
+function buildLinkTextureData(links, nodeAmount, textureSize) {
+  const totalElements = textureSize * textureSize;
+  const linksData = new Float32Array(totalElements * 4);
+  const linkRangesData = new Float32Array(totalElements * 4);
+  const linksByNode = Array.from({ length: nodeAmount }, () => []);
+  const packedLinks = [];
+
+  for (let i = 0; i < links.length; i++) {
+    const link = links[i];
+    const sourceIndex = link.sourceIndex;
+    const targetIndex = link.targetIndex;
+    const isValid =
+      Number.isInteger(sourceIndex) &&
+      Number.isInteger(targetIndex) &&
+      sourceIndex >= 0 &&
+      targetIndex >= 0 &&
+      sourceIndex < nodeAmount &&
+      targetIndex < nodeAmount;
+
+    if (!isValid) {
+      continue;
+    }
+
+    linksByNode[sourceIndex].push(link);
+    if (targetIndex !== sourceIndex) {
+      linksByNode[targetIndex].push(link);
+    }
+  }
+
+  for (let i = 0; i < nodeAmount; i++) {
+    const incident = linksByNode[i];
+    const rangeOffset = i * 4;
+    linkRangesData[rangeOffset + 0] = packedLinks.length;
+    linkRangesData[rangeOffset + 1] = incident.length;
+
+    for (let j = 0; j < incident.length; j++) {
+      packedLinks.push(incident[j]);
+    }
+  }
+
+  if (packedLinks.length > totalElements) {
+    throw new Error(
+      `Packed links (${packedLinks.length}) exceed texture capacity (${totalElements}).`
+    );
+  }
+
+  for (let i = 0; i < packedLinks.length; i++) {
+    const link = packedLinks[i];
+    const sourceIndex = link.sourceIndex;
+    const targetIndex = link.targetIndex;
+    const linkOffset = i * 4;
+
+    linksData[linkOffset + 0] = (sourceIndex % textureSize) / textureSize;
+    linksData[linkOffset + 1] = Math.floor(sourceIndex / textureSize) / textureSize;
+    linksData[linkOffset + 2] = (targetIndex % textureSize) / textureSize;
+    linksData[linkOffset + 3] = Math.floor(targetIndex / textureSize) / textureSize;
+  }
+
+  return {
+    linksData,
+    linkRangesData,
+    packedLinkAmount: packedLinks.length,
+  };
+}
+
 /**
  * Initialize WASM module
  */
@@ -63,12 +128,14 @@ async function processTextures(data) {
     const linksDataSize = links.length * 2 * 4; // 2 ints per link, 4 bytes per int
     const positionsSize = totalElements * 4 * 4; // 4 floats per element, 4 bytes per float
     const linksTextureSize = totalElements * 4 * 4; // 4 floats per element, 4 bytes per float
+    const linkRangesTextureSize = totalElements * 4 * 4; // 4 floats per element, 4 bytes per float
     
     // Allocate memory in WASM
     const nodesDataPtr = wasmModule.exports.allocateMemory(nodesDataSize);
     const linksDataPtr = wasmModule.exports.allocateMemory(linksDataSize);
     const positionsPtr = wasmModule.exports.allocateMemory(positionsSize);
     const linksTexturePtr = wasmModule.exports.allocateMemory(linksTextureSize);
+    const linkRangesTexturePtr = wasmModule.exports.allocateMemory(linkRangesTextureSize);
     
     // Prepare node data
     const nodesBuffer = new ArrayBuffer(nodesDataSize);
@@ -98,7 +165,7 @@ async function processTextures(data) {
     new Uint8Array(wasmMemory, linksDataPtr, linksDataSize).set(new Uint8Array(linksBuffer));
     
     // Process textures in WASM
-    wasmModule.exports.processTextures(
+    const packedLinkAmount = wasmModule.exports.processTextures(
       nodesDataPtr,
       nodes.length,
       linksDataPtr,
@@ -106,22 +173,30 @@ async function processTextures(data) {
       textureSize,
       positionsPtr,
       linksTexturePtr,
+      linkRangesTexturePtr,
       frustumSize
     );
+
+    if (packedLinkAmount < 0) {
+      throw new Error('Packed links exceed texture capacity');
+    }
     
     // Extract results
     const positionsData = new Float32Array(wasmMemory, positionsPtr, totalElements * 4);
     const linksTextureData = new Float32Array(wasmMemory, linksTexturePtr, totalElements * 4);
+    const linkRangesTextureData = new Float32Array(wasmMemory, linkRangesTexturePtr, totalElements * 4);
     
     // Copy results to transferable buffers
     const positionsResult = new Float32Array(positionsData);
     const linksResult = new Float32Array(linksTextureData);
+    const linkRangesResult = new Float32Array(linkRangesTextureData);
     
     // Free WASM memory
     wasmModule.exports.freeMemory(nodesDataPtr);
     wasmModule.exports.freeMemory(linksDataPtr);
     wasmModule.exports.freeMemory(positionsPtr);
     wasmModule.exports.freeMemory(linksTexturePtr);
+    wasmModule.exports.freeMemory(linkRangesTexturePtr);
     
     const processingTime = performance.now() - startTime;
     
@@ -133,10 +208,12 @@ async function processTextures(data) {
       data: {
         positions: positionsResult,
         links: linksResult,
+        linkRanges: linkRangesResult,
+        packedLinkAmount,
         processingTime,
         memoryUsage: wasmModule.exports.getMemoryUsage()
       }
-    }, [positionsResult.buffer, linksResult.buffer]);
+    }, [positionsResult.buffer, linksResult.buffer, linkRangesResult.buffer]);
     
   } catch (error) {
     self.postMessage({
@@ -166,7 +243,6 @@ function processFallback(data) {
   try {
     const totalElements = textureSize * textureSize;
     const positionsData = new Float32Array(totalElements * 4);
-    const linksData = new Float32Array(totalElements * 4);
     
     // Process positions
     for (let i = 0; i < totalElements; i++) {
@@ -191,31 +267,7 @@ function processFallback(data) {
       }
     }
     
-    // Process links
-    for (let i = 0; i < totalElements; i++) {
-      const baseIndex = i * 4;
-      
-      if (i < links.length) {
-        const link = links[i];
-        const sourceIndex = link.sourceIndex;
-        const targetIndex = link.targetIndex;
-        
-        const sourceU = (sourceIndex % textureSize) / textureSize;
-        const sourceV = Math.floor(sourceIndex / textureSize) / textureSize;
-        const targetU = (targetIndex % textureSize) / textureSize;
-        const targetV = Math.floor(targetIndex / textureSize) / textureSize;
-        
-        linksData[baseIndex + 0] = sourceU;
-        linksData[baseIndex + 1] = sourceV;
-        linksData[baseIndex + 2] = targetU;
-        linksData[baseIndex + 3] = targetV;
-      } else {
-        linksData[baseIndex + 0] = 0;
-        linksData[baseIndex + 1] = 0;
-        linksData[baseIndex + 2] = 0;
-        linksData[baseIndex + 3] = 0;
-      }
-    }
+    const linkTextureData = buildLinkTextureData(links, nodes.length, textureSize);
     
     const processingTime = performance.now() - startTime;
     
@@ -225,11 +277,13 @@ function processFallback(data) {
       success: true,
       data: {
         positions: positionsData,
-        links: linksData,
+        links: linkTextureData.linksData,
+        linkRanges: linkTextureData.linkRangesData,
+        packedLinkAmount: linkTextureData.packedLinkAmount,
         processingTime,
         memoryUsage: 0
       }
-    }, [positionsData.buffer, linksData.buffer]);
+    }, [positionsData.buffer, linkTextureData.linksData.buffer, linkTextureData.linkRangesData.buffer]);
     
   } catch (error) {
     self.postMessage({

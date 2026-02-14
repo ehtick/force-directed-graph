@@ -129,6 +129,13 @@ var getIndex = `
     return col + row * s;
   }
 `;
+var getUVFromIndex = `
+  vec2 getUVFromIndex( float i ) {
+    float uvx = mod( i, size ) / size;
+    float uvy = floor( i / size ) / size;
+    return vec2( uvx, uvy );
+  }
+`;
 var random = `
   float random( vec2 seed ) {
     return fract( sin( dot( seed.xy, vec2( 12.9898, 78.233 ) ) ) * 43758.5453 );
@@ -140,7 +147,7 @@ var jiggle = `
   }
 `;
 var link = `
-  vec3 link( float i, int id1, vec3 p1, vec3 v1, vec2 uv2 ) {
+  vec3 link( int id1, vec2 uv2 ) {
 
     vec3 result = vec3( 0.0 );
 
@@ -230,10 +237,12 @@ var simplex = `
   uniform float stiffness;
   uniform float gravity;
   uniform sampler2D textureLinks;
+  uniform sampler2D textureLinkRanges;
 
   ${getPosition}
   ${getVelocity}
   ${getIndex}
+  ${getUVFromIndex}
   ${random}
   ${jiggle}
   ${link}
@@ -252,28 +261,27 @@ var simplex = `
         b = vec3( 0.0 ),
         c = vec3( 0.0 );
 
-    for ( float i = 0.0; i < max( nodeAmount, edgeAmount ); i += 1.0 ) {
+    vec4 linkRange = texture2D( textureLinkRanges, uv );
+    float linkStart = linkRange.x;
+    float linkCount = linkRange.y;
 
-      float uvx = mod( i, size ) / size;
-      float uvy = floor( i / size ) / size;
+    for ( float i = 0.0; i < edgeAmount; i += 1.0 ) {
+      if ( i >= linkCount ) {
+        break;
+      }
+      vec2 linkUV = getUVFromIndex( linkStart + i );
+      b += link( id1, linkUV );
+    }
 
-      vec2 uv2 = vec2( uvx, uvy );
-
+    for ( float i = 0.0; i < nodeAmount; i += 1.0 ) {
+      vec2 uv2 = getUVFromIndex( i );
       int id2 = getIndex( uv2 );
       vec3 v2 = getVelocity( uv2 );
       vec3 p2 = getPosition( uv2 );
-
-      if ( i < edgeAmount ) {
-        b += link( i, id1, p1, v1, uv2 );
-      }
-
-      if ( i < nodeAmount) {
-        c += charge( i, id1, p1, v1, id2, p2, v2 );
-      }
-
+      c += charge( i, id1, p1, v1, id2, p2, v2 );
     }
 
-    b *= 1.0 - step( edgeAmount, float( id1 ) );
+    b *= 1.0 - step( nodeAmount, float( id1 ) );
     c *= 1.0 - step( nodeAmount, float( id1 ) );
 
     // 4.
@@ -310,6 +318,7 @@ var nested = `
   ${getPosition}
   ${getVelocity}
   ${getIndex}
+  ${getUVFromIndex}
   ${random}
   ${jiggle}
   ${link}
@@ -331,7 +340,7 @@ var nested = `
     /*
     for ( float i = 0.0; i < linkAmount; i += 1.0 ) {
       // TODO: get all edges and link them
-      b += link( i, id1, p1, v1, uv2 );
+      b += link( id1, uv2 );
     }
     */
 
@@ -396,6 +405,7 @@ var points = {
     varying vec3 vColor;
     varying float vImageKey;
     varying float vDistance;
+    varying float vViewZ;
 
     attribute float imageKey;
 
@@ -411,6 +421,7 @@ var points = {
       gl_PointSize *= mix( 1.0, frustumSize / - mvPosition.z, sizeAttenuation );
 
       vDistance = 1.0 / - mvPosition.z;
+      vViewZ = mvPosition.z;
       vColor = color;
       vImageKey = imageKey;
 
@@ -433,18 +444,34 @@ var points = {
     varying vec3 vColor;
     varying float vImageKey;
     varying float vDistance;
-
-    ${circle}
+    varying float vViewZ;
 
     void main() {
 
-      vec2 uv = 2.0 * vec2( gl_PointCoord ) - 1.0;
-      float t = circle( uv, vec2( 0.0, 0.0 ), 0.5, 1.0 );
+      // Calculate distance from center for circular shape and depth
+      vec2 cxy = 2.0 * gl_PointCoord - 1.0;
+      float r = length(cxy);
 
+      // Antialiased circle using fwidth for automatic edge smoothing
+      float delta = fwidth(r);
+      float t = 1.0 - smoothstep(1.0 - delta, 1.0, r);
+
+      // Calculate custom depth to fix z-fighting with transparent points
+      // For fragments inside the circle, offset depth proportionally
+      if (r <= 1.0) {
+        // Closer to edge = larger depth offset (appears further back)
+        // This creates a spherical depth profile
+        float depthOffset = (1.0 - r) * 0.0001;
+        gl_FragDepth = gl_FragCoord.z + depthOffset;
+      } else {
+        gl_FragDepth = gl_FragCoord.z;
+      }
+
+      // Calculate texture atlas coordinates for image sprites
       float col = mod( vImageKey, imageDimensions );
       float row = floor( vImageKey / imageDimensions );
 
-      uv = vec2( 0.0 );
+      vec2 uv = vec2( 0.0 );
       uv.x = mix( 0.0, 1.0 / imageDimensions, gl_PointCoord.x );
       uv.y = mix( 0.0, 1.0 / imageDimensions, gl_PointCoord.y );
 
@@ -459,12 +486,11 @@ var points = {
       vec3 layer = mix( vec3( 1.0 ), texel.rgb, useImage );
 
       float alpha = opacity * t;
-
       if ( alpha <= 0.0 ) {
         discard;
       }
 
-      gl_FragColor = vec4( layer * mix( vec3( 1.0 ), vColor, inheritColors ) * uColor, alpha );
+      gl_FragColor = vec4( layer * mix( vec3( 1.0 ), vColor, inheritColors ) * uColor, opacity );
       #include <fog_fragment>
 
     }
@@ -895,6 +921,71 @@ function createWorkerCode(wasmUrl) {
 let wasmModule = null;
 let wasmReady = false;
 
+function buildLinkTextureData(links, nodeAmount, textureSize) {
+  const totalElements = textureSize * textureSize;
+  const linksData = new Float32Array(totalElements * 4);
+  const linkRangesData = new Float32Array(totalElements * 4);
+  const linksByNode = Array.from({ length: nodeAmount }, () => []);
+  const packedLinks = [];
+
+  for (let i = 0; i < links.length; i++) {
+    const link = links[i];
+    const sourceIndex = link.sourceIndex;
+    const targetIndex = link.targetIndex;
+    const isValid =
+      Number.isInteger(sourceIndex) &&
+      Number.isInteger(targetIndex) &&
+      sourceIndex >= 0 &&
+      targetIndex >= 0 &&
+      sourceIndex < nodeAmount &&
+      targetIndex < nodeAmount;
+
+    if (!isValid) {
+      continue;
+    }
+
+    linksByNode[sourceIndex].push(link);
+    if (targetIndex !== sourceIndex) {
+      linksByNode[targetIndex].push(link);
+    }
+  }
+
+  for (let i = 0; i < nodeAmount; i++) {
+    const incident = linksByNode[i];
+    const rangeOffset = i * 4;
+    linkRangesData[rangeOffset + 0] = packedLinks.length;
+    linkRangesData[rangeOffset + 1] = incident.length;
+
+    for (let j = 0; j < incident.length; j++) {
+      packedLinks.push(incident[j]);
+    }
+  }
+
+  if (packedLinks.length > totalElements) {
+    throw new Error(
+      \`Packed links (\${packedLinks.length}) exceed texture capacity (\${totalElements}).\`
+    );
+  }
+
+  for (let i = 0; i < packedLinks.length; i++) {
+    const link = packedLinks[i];
+    const sourceIndex = link.sourceIndex;
+    const targetIndex = link.targetIndex;
+    const linkOffset = i * 4;
+
+    linksData[linkOffset + 0] = (sourceIndex % textureSize) / textureSize;
+    linksData[linkOffset + 1] = Math.floor(sourceIndex / textureSize) / textureSize;
+    linksData[linkOffset + 2] = (targetIndex % textureSize) / textureSize;
+    linksData[linkOffset + 3] = Math.floor(targetIndex / textureSize) / textureSize;
+  }
+
+  return {
+    linksData,
+    linkRangesData,
+    packedLinkAmount: packedLinks.length,
+  };
+}
+
 /**
  * Initialize WASM module using provided URL
  */
@@ -976,10 +1067,16 @@ async function processTextures(data) {
     const linksDataSize = links.length * 2 * 4;
     const positionsSize = totalElements * 4 * 4;
     const linksTextureSize = totalElements * 4 * 4;
+    const linkRangesTextureSize = totalElements * 4 * 4;
     
     // Use simple memory allocation (grow memory as needed)
     const memory = wasmModule.exports.memory;
-    const memoryNeeded = nodesDataSize + linksDataSize + positionsSize + linksTextureSize;
+    const memoryNeeded =
+      nodesDataSize +
+      linksDataSize +
+      positionsSize +
+      linksTextureSize +
+      linkRangesTextureSize;
     const currentSize = memory.buffer.byteLength;
     
     if (currentSize < memoryNeeded) {
@@ -996,6 +1093,8 @@ async function processTextures(data) {
     const positionsPtr = memoryOffset;
     memoryOffset += positionsSize;
     const linksTexturePtr = memoryOffset;
+    memoryOffset += linksTextureSize;
+    const linkRangesTexturePtr = memoryOffset;
     
     // Prepare and copy node data
     const wasmMemory = new Uint8Array(memory.buffer);
@@ -1022,7 +1121,7 @@ async function processTextures(data) {
     
     // Process textures in WASM (if function exists)
     if (wasmModule.exports.processTextures) {
-      wasmModule.exports.processTextures(
+      const packedLinkAmount = wasmModule.exports.processTextures(
         nodesDataPtr,
         nodes.length,
         linksDataPtr,
@@ -1030,34 +1129,43 @@ async function processTextures(data) {
         textureSize,
         positionsPtr,
         linksTexturePtr,
+        linkRangesTexturePtr,
         frustumSize
       );
+
+      if (packedLinkAmount < 0) {
+        throw new Error('Packed links exceed texture capacity');
+      }
+
+      // Extract results
+      const positionsData = new Float32Array(memory.buffer, positionsPtr, totalElements * 4);
+      const linksTextureData = new Float32Array(memory.buffer, linksTexturePtr, totalElements * 4);
+      const linkRangesTextureData = new Float32Array(memory.buffer, linkRangesTexturePtr, totalElements * 4);
+      
+      // Copy results to transferable buffers
+      const positionsResult = new Float32Array(positionsData);
+      const linksResult = new Float32Array(linksTextureData);
+      const linkRangesResult = new Float32Array(linkRangesTextureData);
+      
+      const processingTime = performance.now() - startTime;
+      
+      // Send results back to main thread
+      self.postMessage({
+        type: 'texture-processed',
+        requestId,
+        success: true,
+        data: {
+          positions: positionsResult,
+          links: linksResult,
+          linkRanges: linkRangesResult,
+          packedLinkAmount,
+          processingTime,
+          memoryUsage: memory.buffer.byteLength
+        }
+      }, [positionsResult.buffer, linksResult.buffer, linkRangesResult.buffer]);
     } else {
       throw new Error('WASM processTextures function not found');
     }
-    
-    // Extract results
-    const positionsData = new Float32Array(memory.buffer, positionsPtr, totalElements * 4);
-    const linksTextureData = new Float32Array(memory.buffer, linksTexturePtr, totalElements * 4);
-    
-    // Copy results to transferable buffers
-    const positionsResult = new Float32Array(positionsData);
-    const linksResult = new Float32Array(linksTextureData);
-    
-    const processingTime = performance.now() - startTime;
-    
-    // Send results back to main thread
-    self.postMessage({
-      type: 'texture-processed',
-      requestId,
-      success: true,
-      data: {
-        positions: positionsResult,
-        links: linksResult,
-        processingTime,
-        memoryUsage: memory.buffer.byteLength
-      }
-    }, [positionsResult.buffer, linksResult.buffer]);
     
   } catch (error) {
     self.postMessage({
@@ -1086,7 +1194,6 @@ function processFallback(data) {
   try {
     const totalElements = textureSize * textureSize;
     const positionsData = new Float32Array(totalElements * 4);
-    const linksData = new Float32Array(totalElements * 4);
     
     // Process positions
     for (let i = 0; i < totalElements; i++) {
@@ -1111,31 +1218,7 @@ function processFallback(data) {
       }
     }
     
-    // Process links
-    for (let i = 0; i < totalElements; i++) {
-      const baseIndex = i * 4;
-      
-      if (i < links.length) {
-        const link = links[i];
-        const sourceIndex = link.sourceIndex;
-        const targetIndex = link.targetIndex;
-        
-        const sourceU = (sourceIndex % textureSize) / textureSize;
-        const sourceV = Math.floor(sourceIndex / textureSize) / textureSize;
-        const targetU = (targetIndex % textureSize) / textureSize;
-        const targetV = Math.floor(targetIndex / textureSize) / textureSize;
-        
-        linksData[baseIndex + 0] = sourceU;
-        linksData[baseIndex + 1] = sourceV;
-        linksData[baseIndex + 2] = targetU;
-        linksData[baseIndex + 3] = targetV;
-      } else {
-        linksData[baseIndex + 0] = 0;
-        linksData[baseIndex + 1] = 0;
-        linksData[baseIndex + 2] = 0;
-        linksData[baseIndex + 3] = 0;
-      }
-    }
+    const linkTextureData = buildLinkTextureData(links, nodes.length, textureSize);
     
     const processingTime = performance.now() - startTime;
     
@@ -1145,11 +1228,13 @@ function processFallback(data) {
       success: true,
       data: {
         positions: positionsData,
-        links: linksData,
+        links: linkTextureData.linksData,
+        linkRanges: linkTextureData.linkRangesData,
+        packedLinkAmount: linkTextureData.packedLinkAmount,
         processingTime,
         memoryUsage: 0
       }
-    }, [positionsData.buffer, linksData.buffer]);
+    }, [positionsData.buffer, linkTextureData.linksData.buffer, linkTextureData.linkRangesData.buffer]);
     
   } catch (error) {
     self.postMessage({
@@ -1381,6 +1466,55 @@ var buffers = {
   int: new Uint8ClampedArray(4),
   float: new Float32Array(4)
 };
+function buildLinkTextureData(preparedLinks, nodeAmount, size2) {
+  const totalElements = size2 * size2;
+  const linksData = new Float32Array(totalElements * 4);
+  const linkRangesData = new Float32Array(totalElements * 4);
+  const linksByNode = Array.from({ length: nodeAmount }, () => []);
+  const packedLinks = [];
+  for (let i = 0; i < preparedLinks.length; i++) {
+    const link2 = preparedLinks[i];
+    const sourceIndex = link2.sourceIndex;
+    const targetIndex = link2.targetIndex;
+    const isValid = Number.isInteger(sourceIndex) && Number.isInteger(targetIndex) && sourceIndex >= 0 && targetIndex >= 0 && sourceIndex < nodeAmount && targetIndex < nodeAmount;
+    if (!isValid) {
+      continue;
+    }
+    linksByNode[sourceIndex].push(link2);
+    if (targetIndex !== sourceIndex) {
+      linksByNode[targetIndex].push(link2);
+    }
+  }
+  for (let i = 0; i < nodeAmount; i++) {
+    const rangeOffset = i * 4;
+    const incident = linksByNode[i];
+    linkRangesData[rangeOffset + 0] = packedLinks.length;
+    linkRangesData[rangeOffset + 1] = incident.length;
+    for (let j = 0; j < incident.length; j++) {
+      packedLinks.push(incident[j]);
+    }
+  }
+  if (packedLinks.length > totalElements) {
+    throw new Error(
+      `Packed links (${packedLinks.length}) exceed texture capacity (${totalElements}).`
+    );
+  }
+  for (let i = 0; i < packedLinks.length; i++) {
+    const link2 = packedLinks[i];
+    const sourceIndex = link2.sourceIndex;
+    const targetIndex = link2.targetIndex;
+    const linkOffset = i * 4;
+    linksData[linkOffset + 0] = sourceIndex % size2 / size2;
+    linksData[linkOffset + 1] = Math.floor(sourceIndex / size2) / size2;
+    linksData[linkOffset + 2] = targetIndex % size2 / size2;
+    linksData[linkOffset + 3] = Math.floor(targetIndex / size2) / size2;
+  }
+  return {
+    linksData,
+    linkRangesData,
+    packedLinkAmount: packedLinks.length
+  };
+}
 var ForceDirectedGraph = class extends import_three5.Group {
   ready = false;
   /**
@@ -1454,6 +1588,7 @@ var ForceDirectedGraph = class extends import_three5.Group {
   set(data, callback) {
     const scope = this;
     let { gpgpu, registry, renderer, uniforms } = this.userData;
+    let packedLinkAmount = 0;
     this.ready = false;
     this.userData.data = data;
     registry.clear();
@@ -1475,13 +1610,14 @@ var ForceDirectedGraph = class extends import_three5.Group {
         child.dispose();
       }
     }
-    const size2 = getPotSize(Math.max(data.nodes.length, data.links.length));
+    const size2 = getPotSize(Math.max(data.nodes.length, data.links.length * 2));
     uniforms.size.value = size2;
     gpgpu = new import_GPUComputationRenderer.GPUComputationRenderer(size2, size2, renderer);
     const textures = {
       positions: gpgpu.createTexture(),
       velocities: gpgpu.createTexture(),
-      links: gpgpu.createTexture()
+      links: gpgpu.createTexture(),
+      linkRanges: gpgpu.createTexture()
     };
     const variables = {
       positions: gpgpu.addVariable(
@@ -1507,22 +1643,22 @@ var ForceDirectedGraph = class extends import_three5.Group {
     }
     async function fill() {
       const { workerManager } = scope.userData;
+      const preparedLinks = data.links.map((link2) => {
+        const sourceIndex = registry.get(link2.source);
+        const targetIndex = registry.get(link2.target);
+        link2.sourceIndex = sourceIndex;
+        link2.targetIndex = targetIndex;
+        return {
+          ...link2,
+          sourceIndex,
+          targetIndex
+        };
+      });
       if (!workerManager.isReady()) {
         await workerManager.init();
       }
       if (workerManager.isReady()) {
         try {
-          const preparedLinks = data.links.map((link2) => {
-            const sourceIndex = registry.get(link2.source);
-            const targetIndex = registry.get(link2.target);
-            link2.sourceIndex = sourceIndex;
-            link2.targetIndex = targetIndex;
-            return {
-              ...link2,
-              sourceIndex,
-              targetIndex
-            };
-          });
           const result = await workerManager.processTextures({
             nodes: data.nodes,
             links: preparedLinks,
@@ -1531,53 +1667,43 @@ var ForceDirectedGraph = class extends import_three5.Group {
           });
           textures.positions.image.data.set(result.positions);
           textures.links.image.data.set(result.links);
+          textures.linkRanges.image.data.set(result.linkRanges);
+          packedLinkAmount = result.packedLinkAmount;
           console.log(`Texture processing completed in ${result.processingTime.toFixed(2)}ms using ${workerManager.isWasmAvailable() ? "WASM" : "JavaScript"}`);
           return Promise.resolve();
         } catch (error) {
           console.warn("Worker processing failed, falling back to main thread:", error);
         }
       }
-      return fillMainThread();
+      return fillMainThread(preparedLinks);
     }
-    function fillMainThread() {
-      let k = 0;
-      return each(
-        textures.positions.image.data,
-        (_, i) => {
-          const x = Math.random() * 2 - 1;
-          const y = Math.random() * 2 - 1;
-          const z = Math.random() * 2 - 1;
-          if (k < data.nodes.length) {
-            const node = data.nodes[k];
-            textures.positions.image.data[i + 0] = typeof node.x !== "undefined" ? node.x : x;
-            textures.positions.image.data[i + 1] = typeof node.y !== "undefined" ? node.y : y;
-            textures.positions.image.data[i + 2] = typeof node.z !== "undefined" ? node.z : z;
-            textures.positions.image.data[i + 3] = node.isStatic ? 1 : 0;
-          } else {
-            textures.positions.image.data[i + 0] = uniforms.frustumSize.value * 10;
-            textures.positions.image.data[i + 1] = uniforms.frustumSize.value * 10;
-            textures.positions.image.data[i + 2] = uniforms.frustumSize.value * 10;
-            textures.positions.image.data[i + 3] = uniforms.frustumSize.value * 10;
-          }
-          let i1, i2, uvx, uvy;
-          if (k < data.links.length) {
-            i1 = registry.get(data.links[k].source);
-            i2 = registry.get(data.links[k].target);
-            data.links[k].sourceIndex = i1;
-            data.links[k].targetIndex = i2;
-            uvx = i1 % size2 / size2;
-            uvy = Math.floor(i1 / size2) / size2;
-            textures.links.image.data[i + 0] = uvx;
-            textures.links.image.data[i + 1] = uvy;
-            uvx = i2 % size2 / size2;
-            uvy = Math.floor(i2 / size2) / size2;
-            textures.links.image.data[i + 2] = uvx;
-            textures.links.image.data[i + 3] = uvy;
-          }
-          k++;
-        },
-        4
+    function fillMainThread(preparedLinks) {
+      const linkTextureData = buildLinkTextureData(
+        preparedLinks,
+        data.nodes.length,
+        size2
       );
+      textures.links.image.data.set(linkTextureData.linksData);
+      textures.linkRanges.image.data.set(linkTextureData.linkRangesData);
+      packedLinkAmount = linkTextureData.packedLinkAmount;
+      return each(textures.positions.image.data, (_, i) => {
+        const k = i / 4;
+        const x = Math.random() * 2 - 1;
+        const y = Math.random() * 2 - 1;
+        const z = Math.random() * 2 - 1;
+        if (k < data.nodes.length) {
+          const node = data.nodes[k];
+          textures.positions.image.data[i + 0] = typeof node.x !== "undefined" ? node.x : x;
+          textures.positions.image.data[i + 1] = typeof node.y !== "undefined" ? node.y : y;
+          textures.positions.image.data[i + 2] = typeof node.z !== "undefined" ? node.z : z;
+          textures.positions.image.data[i + 3] = node.isStatic ? 1 : 0;
+        } else {
+          textures.positions.image.data[i + 0] = uniforms.frustumSize.value * 10;
+          textures.positions.image.data[i + 1] = uniforms.frustumSize.value * 10;
+          textures.positions.image.data[i + 2] = uniforms.frustumSize.value * 10;
+          textures.positions.image.data[i + 3] = uniforms.frustumSize.value * 10;
+        }
+      }, 4);
     }
     function setup() {
       return new Promise((resolve, reject) => {
@@ -1600,7 +1726,7 @@ var ForceDirectedGraph = class extends import_three5.Group {
           value: data.nodes.length
         };
         variables.velocities.material.uniforms.edgeAmount = {
-          value: data.links.length
+          value: packedLinkAmount
         };
         variables.velocities.material.uniforms.maxSpeed = uniforms.maxSpeed;
         variables.velocities.material.uniforms.timeStep = uniforms.timeStep;
@@ -1608,6 +1734,9 @@ var ForceDirectedGraph = class extends import_three5.Group {
         variables.velocities.material.uniforms.repulsion = uniforms.repulsion;
         variables.velocities.material.uniforms.textureLinks = {
           value: textures.links
+        };
+        variables.velocities.material.uniforms.textureLinkRanges = {
+          value: textures.linkRanges
         };
         variables.velocities.material.uniforms.springLength = uniforms.springLength;
         variables.velocities.material.uniforms.stiffness = uniforms.stiffness;
