@@ -131,72 +131,83 @@ async function processTextures(data) {
     const linkRangesTextureSize = totalElements * 4 * 4; // 4 floats per element, 4 bytes per float
     
     // Allocate memory in WASM
-    const nodesDataPtr = wasmModule.exports.allocateMemory(nodesDataSize);
-    const linksDataPtr = wasmModule.exports.allocateMemory(linksDataSize);
-    const positionsPtr = wasmModule.exports.allocateMemory(positionsSize);
-    const linksTexturePtr = wasmModule.exports.allocateMemory(linksTextureSize);
-    const linkRangesTexturePtr = wasmModule.exports.allocateMemory(linkRangesTextureSize);
+    let nodesDataPtr = 0;
+    let linksDataPtr = 0;
+    let positionsPtr = 0;
+    let linksTexturePtr = 0;
+    let linkRangesTexturePtr = 0;
+    let positionsResult = null;
+    let linksResult = null;
+    let linkRangesResult = null;
+    let packedLinkAmount = 0;
     
-    // Prepare node data
-    const nodesBuffer = new ArrayBuffer(nodesDataSize);
-    const nodesView = new Float32Array(nodesBuffer);
-    for (let i = 0; i < nodes.length; i++) {
-      const node = nodes[i];
-      const offset = i * 4;
-      nodesView[offset + 0] = typeof node.x !== 'undefined' ? node.x : NaN;
-      nodesView[offset + 1] = typeof node.y !== 'undefined' ? node.y : NaN;
-      nodesView[offset + 2] = typeof node.z !== 'undefined' ? node.z : NaN;
-      nodesView[offset + 3] = node.isStatic ? 1.0 : 0.0;
-    }
-    
-    // Prepare links data
-    const linksBuffer = new ArrayBuffer(linksDataSize);
-    const linksView = new Int32Array(linksBuffer);
-    for (let i = 0; i < links.length; i++) {
-      const link = links[i];
-      const offset = i * 2;
-      linksView[offset + 0] = link.sourceIndex;
-      linksView[offset + 1] = link.targetIndex;
-    }
-    
-    // Copy data to WASM memory
-    const wasmMemory = wasmModule.exports.memory.buffer;
-    new Uint8Array(wasmMemory, nodesDataPtr, nodesDataSize).set(new Uint8Array(nodesBuffer));
-    new Uint8Array(wasmMemory, linksDataPtr, linksDataSize).set(new Uint8Array(linksBuffer));
-    
-    // Process textures in WASM
-    const packedLinkAmount = wasmModule.exports.processTextures(
-      nodesDataPtr,
-      nodes.length,
-      linksDataPtr,
-      links.length,
-      textureSize,
-      positionsPtr,
-      linksTexturePtr,
-      linkRangesTexturePtr,
-      frustumSize
-    );
+    try {
+      nodesDataPtr = wasmModule.exports.allocateMemory(nodesDataSize);
+      linksDataPtr = wasmModule.exports.allocateMemory(linksDataSize);
+      positionsPtr = wasmModule.exports.allocateMemory(positionsSize);
+      linksTexturePtr = wasmModule.exports.allocateMemory(linksTextureSize);
+      linkRangesTexturePtr = wasmModule.exports.allocateMemory(linkRangesTextureSize);
 
-    if (packedLinkAmount < 0) {
-      throw new Error('Packed links exceed texture capacity');
+      // Prepare node data
+      const nodesBuffer = new ArrayBuffer(nodesDataSize);
+      const nodesView = new Float32Array(nodesBuffer);
+      for (let i = 0; i < nodes.length; i++) {
+        const node = nodes[i];
+        const offset = i * 4;
+        nodesView[offset + 0] = typeof node.x !== 'undefined' ? node.x : NaN;
+        nodesView[offset + 1] = typeof node.y !== 'undefined' ? node.y : NaN;
+        nodesView[offset + 2] = typeof node.z !== 'undefined' ? node.z : NaN;
+        nodesView[offset + 3] = node.isStatic ? 1.0 : 0.0;
+      }
+      
+      // Prepare links data
+      const linksBuffer = new ArrayBuffer(linksDataSize);
+      const linksView = new Int32Array(linksBuffer);
+      for (let i = 0; i < links.length; i++) {
+        const link = links[i];
+        const offset = i * 2;
+        linksView[offset + 0] = link.sourceIndex;
+        linksView[offset + 1] = link.targetIndex;
+      }
+      
+      // Copy data to WASM memory
+      const wasmMemory = wasmModule.exports.memory.buffer;
+      new Uint8Array(wasmMemory, nodesDataPtr, nodesDataSize).set(new Uint8Array(nodesBuffer));
+      new Uint8Array(wasmMemory, linksDataPtr, linksDataSize).set(new Uint8Array(linksBuffer));
+      
+      // Process textures in WASM
+      packedLinkAmount = wasmModule.exports.processTextures(
+        nodesDataPtr,
+        nodes.length,
+        linksDataPtr,
+        links.length,
+        textureSize,
+        positionsPtr,
+        linksTexturePtr,
+        linkRangesTexturePtr,
+        frustumSize
+      );
+
+      if (packedLinkAmount < 0) {
+        throw new Error('Packed links exceed texture capacity');
+      }
+      
+      // Extract results
+      const positionsData = new Float32Array(wasmMemory, positionsPtr, totalElements * 4);
+      const linksTextureData = new Float32Array(wasmMemory, linksTexturePtr, totalElements * 4);
+      const linkRangesTextureData = new Float32Array(wasmMemory, linkRangesTexturePtr, totalElements * 4);
+      
+      // Copy results to transferable buffers
+      positionsResult = new Float32Array(positionsData);
+      linksResult = new Float32Array(linksTextureData);
+      linkRangesResult = new Float32Array(linkRangesTextureData);
+    } finally {
+      if (linkRangesTexturePtr) wasmModule.exports.freeMemory(linkRangesTexturePtr);
+      if (linksTexturePtr) wasmModule.exports.freeMemory(linksTexturePtr);
+      if (positionsPtr) wasmModule.exports.freeMemory(positionsPtr);
+      if (linksDataPtr) wasmModule.exports.freeMemory(linksDataPtr);
+      if (nodesDataPtr) wasmModule.exports.freeMemory(nodesDataPtr);
     }
-    
-    // Extract results
-    const positionsData = new Float32Array(wasmMemory, positionsPtr, totalElements * 4);
-    const linksTextureData = new Float32Array(wasmMemory, linksTexturePtr, totalElements * 4);
-    const linkRangesTextureData = new Float32Array(wasmMemory, linkRangesTexturePtr, totalElements * 4);
-    
-    // Copy results to transferable buffers
-    const positionsResult = new Float32Array(positionsData);
-    const linksResult = new Float32Array(linksTextureData);
-    const linkRangesResult = new Float32Array(linkRangesTextureData);
-    
-    // Free WASM memory
-    wasmModule.exports.freeMemory(nodesDataPtr);
-    wasmModule.exports.freeMemory(linksDataPtr);
-    wasmModule.exports.freeMemory(positionsPtr);
-    wasmModule.exports.freeMemory(linksTexturePtr);
-    wasmModule.exports.freeMemory(linkRangesTexturePtr);
     
     const processingTime = performance.now() - startTime;
     

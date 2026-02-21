@@ -144,9 +144,9 @@ export function processLinks(
   }
 
   if (packedLinkAmount > totalElements) {
-    heap.free(degreeCountsPtr);
-    heap.free(startOffsetsPtr);
     heap.free(cursorsPtr);
+    heap.free(startOffsetsPtr);
+    heap.free(degreeCountsPtr);
     return -1;
   }
 
@@ -188,9 +188,9 @@ export function processLinks(
     }
   }
 
-  heap.free(degreeCountsPtr);
-  heap.free(startOffsetsPtr);
   heap.free(cursorsPtr);
+  heap.free(startOffsetsPtr);
+  heap.free(degreeCountsPtr);
 
   return packedLinkAmount;
 }

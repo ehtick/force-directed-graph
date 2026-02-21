@@ -623,11 +623,11 @@
   local.get $18
   i32.gt_s
   if
-   local.get $19
+   local.get $10
    call $~lib/rt/stub/__free
    local.get $12
    call $~lib/rt/stub/__free
-   local.get $10
+   local.get $19
    call $~lib/rt/stub/__free
    i32.const -1
    return
@@ -771,11 +771,11 @@
     br $for-loop|4
    end
   end
-  local.get $19
+  local.get $10
   call $~lib/rt/stub/__free
   local.get $12
   call $~lib/rt/stub/__free
-  local.get $10
+  local.get $19
   call $~lib/rt/stub/__free
   local.get $6
  )

@@ -69,14 +69,25 @@ const points = {
 
       // Calculate custom depth to fix z-fighting with transparent points
       // For fragments inside the circle, offset depth proportionally
-      if (r <= 1.0) {
-        // Closer to edge = larger depth offset (appears further back)
-        // This creates a spherical depth profile
-        float depthOffset = (1.0 - r) * 0.0001;
-        gl_FragDepth = gl_FragCoord.z + depthOffset;
-      } else {
-        gl_FragDepth = gl_FragCoord.z;
-      }
+      #if defined(GL_EXT_frag_depth)
+        if (r <= 1.0) {
+          // Closer to edge = larger depth offset (appears further back)
+          // This creates a spherical depth profile
+          float depthOffset = (1.0 - r) * 0.0001;
+          gl_FragDepthEXT = gl_FragCoord.z + depthOffset;
+        } else {
+          gl_FragDepthEXT = gl_FragCoord.z;
+        }
+      #elif __VERSION__ >= 300
+        if (r <= 1.0) {
+          // Closer to edge = larger depth offset (appears further back)
+          // This creates a spherical depth profile
+          float depthOffset = (1.0 - r) * 0.0001;
+          gl_FragDepth = gl_FragCoord.z + depthOffset;
+        } else {
+          gl_FragDepth = gl_FragCoord.z;
+        }
+      #endif
 
       // Calculate texture atlas coordinates for image sprites
       float col = mod( vImageKey, imageDimensions );
@@ -101,7 +112,7 @@ const points = {
         discard;
       }
 
-      gl_FragColor = vec4( layer * mix( vec3( 1.0 ), vColor, inheritColors ) * uColor, opacity );
+      gl_FragColor = vec4( layer * mix( vec3( 1.0 ), vColor, inheritColors ) * uColor, alpha );
       #include <fog_fragment>
 
     }
