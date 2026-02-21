@@ -5,6 +5,22 @@
 
 let wasmModule = null;
 let wasmReady = false;
+const MAX_TEXTURE_SIZE = 4096;
+const MAX_BUFFER_BYTES = 512 * 1024 * 1024;
+
+class InputValidationError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'InputValidationError';
+  }
+}
+
+class WasmMemoryError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'WasmMemoryError';
+  }
+}
 
 function buildLinkTextureData(links, nodeAmount, textureSize) {
   const totalElements = textureSize * textureSize;
@@ -71,6 +87,102 @@ function buildLinkTextureData(links, nodeAmount, textureSize) {
   };
 }
 
+function getPackedLinkRequirement(links, nodeAmount) {
+  let packed = 0;
+  for (let i = 0; i < links.length; i++) {
+    const link = links[i];
+    if (!link || typeof link !== 'object') {
+      continue;
+    }
+    const sourceIndex = link.sourceIndex;
+    const targetIndex = link.targetIndex;
+    const isValid =
+      Number.isInteger(sourceIndex) &&
+      Number.isInteger(targetIndex) &&
+      sourceIndex >= 0 &&
+      targetIndex >= 0 &&
+      sourceIndex < nodeAmount &&
+      targetIndex < nodeAmount;
+
+    if (!isValid) {
+      continue;
+    }
+
+    packed += sourceIndex === targetIndex ? 1 : 2;
+  }
+  return packed;
+}
+
+function validateInput(data) {
+  const { nodes, links, textureSize, frustumSize } = data;
+
+  if (!Array.isArray(nodes)) {
+    throw new InputValidationError('Invalid input: nodes must be an array');
+  }
+  if (!Array.isArray(links)) {
+    throw new InputValidationError('Invalid input: links must be an array');
+  }
+  if (!Number.isInteger(textureSize) || textureSize <= 0) {
+    throw new InputValidationError('Invalid input: textureSize must be a positive integer');
+  }
+  if (textureSize > MAX_TEXTURE_SIZE) {
+    throw new InputValidationError(
+      `Invalid input: textureSize ${textureSize} exceeds max ${MAX_TEXTURE_SIZE}`
+    );
+  }
+  if ((textureSize & (textureSize - 1)) !== 0) {
+    throw new InputValidationError('Invalid input: textureSize must be a power of 2');
+  }
+  if (!Number.isFinite(frustumSize) || frustumSize <= 0) {
+    throw new InputValidationError('Invalid input: frustumSize must be a finite positive number');
+  }
+
+  const totalElements = textureSize * textureSize;
+  const nodesDataSize = nodes.length * 4 * 4;
+  const linksDataSize = links.length * 2 * 4;
+  const positionsSize = totalElements * 4 * 4;
+  const linksTextureSize = totalElements * 4 * 4;
+  const linkRangesTextureSize = totalElements * 4 * 4;
+  const requiredPackedLinks = getPackedLinkRequirement(links, nodes.length);
+  const totalBytes =
+    nodesDataSize + linksDataSize + positionsSize + linksTextureSize + linkRangesTextureSize;
+
+  if (requiredPackedLinks > totalElements) {
+    throw new InputValidationError(
+      `Packed links (${requiredPackedLinks}) exceed texture capacity (${totalElements})`
+    );
+  }
+  if (totalBytes > MAX_BUFFER_BYTES) {
+    throw new WasmMemoryError(
+      `Input requires ${totalBytes} bytes, exceeding ${MAX_BUFFER_BYTES} byte worker limit`
+    );
+  }
+
+  return {
+    totalElements,
+    nodesDataSize,
+    linksDataSize,
+    positionsSize,
+    linksTextureSize,
+    linkRangesTextureSize,
+  };
+}
+
+function formatProcessingError(error) {
+  if (error instanceof InputValidationError) {
+    return { type: 'validation', message: error.message };
+  }
+  if (error instanceof WasmMemoryError) {
+    return { type: 'memory', message: error.message };
+  }
+
+  const message = error && error.message ? error.message : String(error);
+  if (/out of memory|memory access|WebAssembly\.Memory|allocation/i.test(message)) {
+    return { type: 'memory', message: `WASM memory failure: ${message}` };
+  }
+  return { type: 'processing', message };
+}
+
 /**
  * Initialize WASM module using simple fetch + instantiate
  */
@@ -124,13 +236,14 @@ async function processTextures(data) {
   const startTime = performance.now();
   
   try {
-    // Calculate memory requirements
-    const totalElements = textureSize * textureSize;
-    const nodesDataSize = nodes.length * 4 * 4; // 4 floats per node, 4 bytes per float
-    const linksDataSize = links.length * 2 * 4; // 2 ints per link, 4 bytes per int
-    const positionsSize = totalElements * 4 * 4; // 4 floats per element, 4 bytes per float
-    const linksTextureSize = totalElements * 4 * 4; // 4 floats per element, 4 bytes per float
-    const linkRangesTextureSize = totalElements * 4 * 4; // 4 floats per element, 4 bytes per float
+    const {
+      totalElements,
+      nodesDataSize,
+      linksDataSize,
+      positionsSize,
+      linksTextureSize,
+      linkRangesTextureSize,
+    } = validateInput(data);
     
     const { allocateMemory, freeMemory, processTextures, memory } = wasmModule.exports;
     if (!allocateMemory || !freeMemory || !processTextures || !memory) {
@@ -228,11 +341,13 @@ async function processTextures(data) {
     }, [positionsResult.buffer, linksResult.buffer, linkRangesResult.buffer]);
     
   } catch (error) {
+    const { type, message } = formatProcessingError(error);
     self.postMessage({
       type: 'texture-processed',
       requestId,
       success: false,
-      error: error.message
+      error: message,
+      errorType: type
     });
   }
 }
@@ -253,7 +368,7 @@ function processFallback(data) {
   const startTime = performance.now();
   
   try {
-    const totalElements = textureSize * textureSize;
+    const { totalElements } = validateInput(data);
     const positionsData = new Float32Array(totalElements * 4);
     
     // Process positions
@@ -298,11 +413,13 @@ function processFallback(data) {
     }, [positionsData.buffer, linkTextureData.linksData.buffer, linkTextureData.linkRangesData.buffer]);
     
   } catch (error) {
+    const { type, message } = formatProcessingError(error);
     self.postMessage({
       type: 'texture-processed',
       requestId,
       success: false,
-      error: error.message
+      error: message,
+      errorType: type
     });
   }
 }
