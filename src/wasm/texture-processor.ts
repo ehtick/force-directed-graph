@@ -64,42 +64,135 @@ export function processNodePositions(
 export function processLinks(
   linksDataPtr: usize,
   linksCount: i32,
+  nodesCount: i32,
   textureSize: i32,
-  linksTexturePtr: usize
-): void {
+  linksTexturePtr: usize,
+  linkRangesTexturePtr: usize
+): i32 {
   const totalElements = textureSize * textureSize;
   const textureSizeF = f32(textureSize);
-  
+  const texelStride = RGBA_COMPONENTS * FLOAT32_BYTES;
+
   for (let i = 0; i < totalElements; i++) {
-    const linkOffset = linksTexturePtr + i * RGBA_COMPONENTS * FLOAT32_BYTES;
-    
-    if (i < linksCount) {
-      // Read link data (sourceIndex, targetIndex) - using i32 load for integer data
-      const linkDataOffset = linksDataPtr + i * 2 * FLOAT32_BYTES;
-      const sourceIndex = load<i32>(linkDataOffset + 0 * FLOAT32_BYTES);
-      const targetIndex = load<i32>(linkDataOffset + 1 * FLOAT32_BYTES);
-      
-      // Calculate UV coordinates for source node
-      const sourceU = f32(sourceIndex % textureSize) / textureSizeF;
-      const sourceV = f32(sourceIndex / textureSize) / textureSizeF;
-      
-      // Calculate UV coordinates for target node
-      const targetU = f32(targetIndex % textureSize) / textureSizeF;
-      const targetV = f32(targetIndex / textureSize) / textureSizeF;
-      
-      // Store UV coordinates in texture using direct memory access
-      store<f32>(linkOffset + 0 * FLOAT32_BYTES, sourceU);
-      store<f32>(linkOffset + 1 * FLOAT32_BYTES, sourceV);
-      store<f32>(linkOffset + 2 * FLOAT32_BYTES, targetU);
-      store<f32>(linkOffset + 3 * FLOAT32_BYTES, targetV);
-    } else {
-      // Clear unused texture elements
-      store<f32>(linkOffset + 0 * FLOAT32_BYTES, 0.0);
-      store<f32>(linkOffset + 1 * FLOAT32_BYTES, 0.0);
-      store<f32>(linkOffset + 2 * FLOAT32_BYTES, 0.0);
-      store<f32>(linkOffset + 3 * FLOAT32_BYTES, 0.0);
+    const linkOffset = linksTexturePtr + i * texelStride;
+    const rangeOffset = linkRangesTexturePtr + i * texelStride;
+
+    // Clear output textures before writing packed link data.
+    store<f32>(linkOffset + 0 * FLOAT32_BYTES, 0.0);
+    store<f32>(linkOffset + 1 * FLOAT32_BYTES, 0.0);
+    store<f32>(linkOffset + 2 * FLOAT32_BYTES, 0.0);
+    store<f32>(linkOffset + 3 * FLOAT32_BYTES, 0.0);
+    store<f32>(rangeOffset + 0 * FLOAT32_BYTES, 0.0);
+    store<f32>(rangeOffset + 1 * FLOAT32_BYTES, 0.0);
+    store<f32>(rangeOffset + 2 * FLOAT32_BYTES, 0.0);
+    store<f32>(rangeOffset + 3 * FLOAT32_BYTES, 0.0);
+  }
+
+  if (nodesCount <= 0) {
+    return 0;
+  }
+
+  const intsSize = nodesCount * FLOAT32_BYTES;
+  const degreeCountsPtr = heap.alloc(intsSize);
+  const startOffsetsPtr = heap.alloc(intsSize);
+  const cursorsPtr = heap.alloc(intsSize);
+
+  for (let i = 0; i < nodesCount; i++) {
+    const offset = i * FLOAT32_BYTES;
+    store<i32>(degreeCountsPtr + offset, 0);
+    store<i32>(startOffsetsPtr + offset, 0);
+    store<i32>(cursorsPtr + offset, 0);
+  }
+
+  for (let i = 0; i < linksCount; i++) {
+    const linkDataOffset = linksDataPtr + i * 2 * FLOAT32_BYTES;
+    const sourceIndex = load<i32>(linkDataOffset + 0 * FLOAT32_BYTES);
+    const targetIndex = load<i32>(linkDataOffset + 1 * FLOAT32_BYTES);
+
+    const isValid =
+      sourceIndex >= 0 &&
+      sourceIndex < nodesCount &&
+      targetIndex >= 0 &&
+      targetIndex < nodesCount;
+
+    if (!isValid) {
+      continue;
+    }
+
+    const sourceOffset = sourceIndex * FLOAT32_BYTES;
+    store<i32>(degreeCountsPtr + sourceOffset, load<i32>(degreeCountsPtr + sourceOffset) + 1);
+
+    if (sourceIndex != targetIndex) {
+      const targetOffset = targetIndex * FLOAT32_BYTES;
+      store<i32>(degreeCountsPtr + targetOffset, load<i32>(degreeCountsPtr + targetOffset) + 1);
     }
   }
+
+  let packedLinkAmount = 0;
+  for (let i = 0; i < nodesCount; i++) {
+    const nodeOffset = i * FLOAT32_BYTES;
+    const count = load<i32>(degreeCountsPtr + nodeOffset);
+    const start = packedLinkAmount;
+
+    store<i32>(startOffsetsPtr + nodeOffset, start);
+    store<i32>(cursorsPtr + nodeOffset, start);
+    packedLinkAmount += count;
+
+    const rangeOffset = linkRangesTexturePtr + i * texelStride;
+    store<f32>(rangeOffset + 0 * FLOAT32_BYTES, f32(start));
+    store<f32>(rangeOffset + 1 * FLOAT32_BYTES, f32(count));
+  }
+
+  if (packedLinkAmount > totalElements) {
+    heap.free(cursorsPtr);
+    heap.free(startOffsetsPtr);
+    heap.free(degreeCountsPtr);
+    return -1;
+  }
+
+  for (let i = 0; i < linksCount; i++) {
+    const linkDataOffset = linksDataPtr + i * 2 * FLOAT32_BYTES;
+    const sourceIndex = load<i32>(linkDataOffset + 0 * FLOAT32_BYTES);
+    const targetIndex = load<i32>(linkDataOffset + 1 * FLOAT32_BYTES);
+
+    const isValid =
+      sourceIndex >= 0 &&
+      sourceIndex < nodesCount &&
+      targetIndex >= 0 &&
+      targetIndex < nodesCount;
+
+    if (!isValid) {
+      continue;
+    }
+
+    const sourceOffset = sourceIndex * FLOAT32_BYTES;
+    let sourceCursor = load<i32>(cursorsPtr + sourceOffset);
+    store<i32>(cursorsPtr + sourceOffset, sourceCursor + 1);
+
+    let linkOffset = linksTexturePtr + sourceCursor * texelStride;
+    store<f32>(linkOffset + 0 * FLOAT32_BYTES, f32(sourceIndex % textureSize) / textureSizeF);
+    store<f32>(linkOffset + 1 * FLOAT32_BYTES, f32(sourceIndex / textureSize) / textureSizeF);
+    store<f32>(linkOffset + 2 * FLOAT32_BYTES, f32(targetIndex % textureSize) / textureSizeF);
+    store<f32>(linkOffset + 3 * FLOAT32_BYTES, f32(targetIndex / textureSize) / textureSizeF);
+
+    if (sourceIndex != targetIndex) {
+      const targetOffset = targetIndex * FLOAT32_BYTES;
+      let targetCursor = load<i32>(cursorsPtr + targetOffset);
+      store<i32>(cursorsPtr + targetOffset, targetCursor + 1);
+
+      linkOffset = linksTexturePtr + targetCursor * texelStride;
+      store<f32>(linkOffset + 0 * FLOAT32_BYTES, f32(sourceIndex % textureSize) / textureSizeF);
+      store<f32>(linkOffset + 1 * FLOAT32_BYTES, f32(sourceIndex / textureSize) / textureSizeF);
+      store<f32>(linkOffset + 2 * FLOAT32_BYTES, f32(targetIndex % textureSize) / textureSizeF);
+      store<f32>(linkOffset + 3 * FLOAT32_BYTES, f32(targetIndex / textureSize) / textureSizeF);
+    }
+  }
+
+  heap.free(cursorsPtr);
+  heap.free(startOffsetsPtr);
+  heap.free(degreeCountsPtr);
+
+  return packedLinkAmount;
 }
 
 /**
@@ -121,10 +214,18 @@ export function processTextures(
   textureSize: i32,
   positionsPtr: usize,
   linksTexturePtr: usize,
+  linkRangesTexturePtr: usize,
   frustumSize: f32
-): void {
+): i32 {
   processNodePositions(nodesDataPtr, nodesCount, textureSize, positionsPtr, frustumSize);
-  processLinks(linksDataPtr, linksCount, textureSize, linksTexturePtr);
+  return processLinks(
+    linksDataPtr,
+    linksCount,
+    nodesCount,
+    textureSize,
+    linksTexturePtr,
+    linkRangesTexturePtr
+  );
 }
 
 /**

@@ -255,16 +255,6 @@ class ForceDirectedGraph extends Group {
           targetIndex,
         };
       });
-
-      const linkTextureData = buildLinkTextureData(
-        preparedLinks,
-        data.nodes.length,
-        size
-      );
-
-      textures.links.image.data.set(linkTextureData.linksData);
-      textures.linkRanges.image.data.set(linkTextureData.linkRangesData);
-      packedLinkAmount = linkTextureData.packedLinkAmount;
       
       // Initialize worker if not already done
       if (!workerManager.isReady()) {
@@ -283,6 +273,9 @@ class ForceDirectedGraph extends Group {
           
           // Copy results to texture data
           textures.positions.image.data.set(result.positions);
+          textures.links.image.data.set(result.links);
+          textures.linkRanges.image.data.set(result.linkRanges);
+          packedLinkAmount = result.packedLinkAmount;
           
           console.log(`Texture processing completed in ${result.processingTime.toFixed(2)}ms using ${workerManager.isWasmAvailable() ? 'WASM' : 'JavaScript'}`);
           
@@ -294,10 +287,19 @@ class ForceDirectedGraph extends Group {
       }
       
       // Fallback to main thread processing
-      return fillMainThread();
+      return fillMainThread(preparedLinks);
     }
     
-    function fillMainThread() {
+    function fillMainThread(preparedLinks) {
+      const linkTextureData = buildLinkTextureData(
+        preparedLinks,
+        data.nodes.length,
+        size
+      );
+      textures.links.image.data.set(linkTextureData.linksData);
+      textures.linkRanges.image.data.set(linkTextureData.linkRangesData);
+      packedLinkAmount = linkTextureData.packedLinkAmount;
+
       return each(textures.positions.image.data, (_, i) => {
         const k = i / 4;
         const x = Math.random() * 2 - 1;
