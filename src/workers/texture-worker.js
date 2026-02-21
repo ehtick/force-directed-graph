@@ -423,37 +423,49 @@ function processFallback(data) {
   }
 }
 
-// Message handler
-self.onmessage = function(event) {
-  const { type, data } = event.data;
-  
-  switch (type) {
-    case 'init':
-      initWasm();
-      break;
-      
-    case 'process-textures':
-      if (data.useWasm && wasmReady) {
-        processTextures(data);
-      } else {
-        processFallback(data);
-      }
-      break;
-      
-    case 'check-wasm':
-      self.postMessage({
-        type: 'wasm-status',
-        ready: wasmReady
-      });
-      break;
-      
-    default:
-      self.postMessage({
-        type: 'error',
-        error: `Unknown message type: ${type}`
-      });
-  }
-};
+if (typeof self !== 'undefined') {
+  // Message handler
+  self.onmessage = function(event) {
+    const { type, data } = event.data;
+    
+    switch (type) {
+      case 'init':
+        initWasm();
+        break;
+        
+      case 'process-textures':
+        if (data.useWasm && wasmReady) {
+          processTextures(data);
+        } else {
+          processFallback(data);
+        }
+        break;
+        
+      case 'check-wasm':
+        self.postMessage({
+          type: 'wasm-status',
+          ready: wasmReady
+        });
+        break;
+        
+      default:
+        self.postMessage({
+          type: 'error',
+          error: `Unknown message type: ${type}`
+        });
+    }
+  };
 
-// Initialize WASM on worker start
-initWasm();
+  // Initialize WASM on worker start
+  initWasm();
+}
+
+export const __TEST__ = {
+  MAX_TEXTURE_SIZE,
+  MAX_BUFFER_BYTES,
+  buildLinkTextureData,
+  getPackedLinkRequirement,
+  validateInput,
+  formatProcessingError,
+  processFallback,
+};
