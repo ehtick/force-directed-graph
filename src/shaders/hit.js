@@ -14,6 +14,8 @@ const hit = {
     uniform float hitScale;
     uniform sampler2D texturePositions;
 
+    attribute float pointSize;
+
     varying vec3 vColor;
     varying float vDistance;
 
@@ -25,7 +27,7 @@ const hit = {
 
       vec4 mvPosition = modelViewMatrix * vec4( vPosition, 1.0 );
 
-      gl_PointSize = nodeRadius * nodeScale;
+      gl_PointSize = nodeRadius * pointSize * nodeScale;
       gl_PointSize *= mix( 1.0, frustumSize / - mvPosition.z, sizeAttenuation );
       gl_PointSize *= hitScale;
 
