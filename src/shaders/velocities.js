@@ -32,6 +32,8 @@ export const simplex = `
   uniform float stiffness;
   uniform float gravity;
   uniform float pinStrength;
+  uniform float uBeginning;
+  uniform float uEnding;
   uniform sampler2D textureLinks;
   uniform sampler2D textureLinkRanges;
   uniform sampler2D textureTargetPositions;
@@ -55,6 +57,9 @@ export const simplex = `
     vec3 p1 = getPosition( uv );
     vec3 v1 = getVelocity( uv );
 
+    float rangeStart = uBeginning * nodeAmount;
+    float rangeEnd   = uEnding   * nodeAmount;
+
     vec3 a = vec3( 0.0 ),
         b = vec3( 0.0 ),
         c = vec3( 0.0 );
@@ -68,7 +73,7 @@ export const simplex = `
         break;
       }
       vec2 linkUV = getUVFromIndex( linkStart + i );
-      b += link( id1, linkUV );
+      b += link( id1, linkUV, rangeStart, rangeEnd );
     }
 
     for ( float i = 0.0; i < nodeAmount; i += 1.0 ) {
@@ -76,16 +81,18 @@ export const simplex = `
       int id2 = getIndex( uv2 );
       vec3 v2 = getVelocity( uv2 );
       vec3 p2 = getPosition( uv2 );
-      c += charge( i, id1, p1, v1, id2, p2, v2 );
+      float id2InRange = step( rangeStart, i ) * ( 1.0 - step( rangeEnd, i ) );
+      c += charge( i, id1, p1, v1, id2, p2, v2 ) * id2InRange;
     }
 
-    b *= 1.0 - step( nodeAmount, float( id1 ) );
-    c *= 1.0 - step( nodeAmount, float( id1 ) );
+    float id1InRange = step( rangeStart, float( id1 ) ) * ( 1.0 - step( rangeEnd, float( id1 ) ) );
+    b *= id1InRange;
+    c *= id1InRange;
 
     // 4.
     vec4 targetTexel = texture2D( textureTargetPositions, uv );
     vec3 d = mix( center( p1 ), anchor( p1, targetTexel.xyz ), pinStrength * targetTexel.w );
-    vec3 acceleration = a + b + c + d;
+    vec3 acceleration = a + b + c + d * id1InRange;
 
     // Calculate Velocity
     vec3 velocity = ( v1 + ( acceleration * timeStep ) ) * damping * alpha;
@@ -113,6 +120,8 @@ export const nested = `
   uniform float stiffness;
   uniform float gravity;
   uniform float pinStrength;
+  uniform float uBeginning;
+  uniform float uEnding;
   uniform sampler2D textureLinks;
   uniform sampler2D textureLinksLookUp;
   uniform sampler2D textureTargetPositions;
@@ -136,6 +145,9 @@ export const nested = `
     vec3 p1 = getPosition( uv );
     vec3 v1 = getVelocity( uv );
 
+    float rangeStart = uBeginning * nodeAmount;
+    float rangeEnd   = uEnding   * nodeAmount;
+
     vec3 a = vec3( 0.0 ),
         b = vec3( 0.0 ),
         c = vec3( 0.0 );
@@ -143,7 +155,7 @@ export const nested = `
     /*
     for ( float i = 0.0; i < linkAmount; i += 1.0 ) {
       // TODO: get all edges and link them
-      b += link( id1, uv2 );
+      b += link( id1, uv2, rangeStart, rangeEnd );
     }
     */
 
@@ -158,19 +170,21 @@ export const nested = `
       vec3 v2 = getVelocity( uv2 );
       vec3 p2 = getPosition( uv2 );
 
+      float id2InRange = step( rangeStart, i ) * ( 1.0 - step( rangeEnd, i ) );
       if ( i < nodeAmount) {
-        c += charge( i, id1, p1, v1, id2, p2, v2 );
+        c += charge( i, id1, p1, v1, id2, p2, v2 ) * id2InRange;
       }
 
     }
 
-    b *= 1.0 - step( edgeAmount, float( id1 ) );
-    c *= 1.0 - step( nodeAmount, float( id1 ) );
+    float id1InRange = step( rangeStart, float( id1 ) ) * ( 1.0 - step( rangeEnd, float( id1 ) ) );
+    b *= id1InRange;
+    c *= id1InRange;
 
   // 4.
   vec4 targetTexel = texture2D( textureTargetPositions, uv );
   vec3 d = mix( center( p1 ), anchor( p1, targetTexel.xyz ), pinStrength * targetTexel.w );
-  vec3 acceleration = a + b + c + d;
+  vec3 acceleration = a + b + c + d * id1InRange;
 
   // Calculate Velocity
   vec3 velocity = ( v1 + ( acceleration * timeStep ) ) * damping * alpha;

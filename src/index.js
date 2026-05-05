@@ -119,6 +119,9 @@ class ForceDirectedGraph extends Group {
       pointColor: { value: new Color(1, 1, 1) },
       linkColor: { value: new Color(1, 1, 1) },
       opacity: { value: 1 },
+      uBeginning: { value: 0 },
+      uEnding: { value: 1 },
+      uNodeAmount: { value: 0 },
     };
     this.userData.hit = new Hit(this);
     this.userData.workerManager = new TextureWorkerManager();
@@ -369,6 +372,9 @@ class ForceDirectedGraph extends Group {
         variables.velocities.material.uniforms.nodeAmount = {
           value: data.nodes.length,
         };
+        variables.velocities.material.uniforms.uBeginning = uniforms.uBeginning;
+        variables.velocities.material.uniforms.uEnding = uniforms.uEnding;
+        uniforms.uNodeAmount.value = data.nodes.length;
         variables.velocities.material.uniforms.edgeAmount = {
           value: packedLinkAmount,
         };
@@ -765,6 +771,18 @@ class ForceDirectedGraph extends Group {
   }
   set opacity(v) {
     this.userData.uniforms.opacity.value = v;
+  }
+  get beginning() {
+    return this.userData.uniforms.uBeginning.value;
+  }
+  set beginning(v) {
+    this.userData.uniforms.uBeginning.value = v;
+  }
+  get ending() {
+    return this.userData.uniforms.uEnding.value;
+  }
+  set ending(v) {
+    this.userData.uniforms.uEnding.value = v;
   }
   get blending() {
     return this.children[0].material.blending;

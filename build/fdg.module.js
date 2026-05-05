@@ -124,7 +124,7 @@ var jiggle = `
   }
 `;
 var link = `
-  vec3 link( int id1, vec2 uv2 ) {
+  vec3 link( int id1, vec2 uv2, float rangeStart, float rangeEnd ) {
 
     vec3 result = vec3( 0.0 );
 
@@ -163,7 +163,9 @@ var link = `
 
     result.z *= 1.0 - is2D;
 
-    return result;
+    float siInRange = step( rangeStart, siF ) * ( 1.0 - step( rangeEnd, siF ) );
+    float tiInRange = step( rangeStart, tiF ) * ( 1.0 - step( rangeEnd, tiF ) );
+    return result * siInRange * tiInRange;
 
   }
 `;
@@ -219,6 +221,8 @@ var simplex = `
   uniform float stiffness;
   uniform float gravity;
   uniform float pinStrength;
+  uniform float uBeginning;
+  uniform float uEnding;
   uniform sampler2D textureLinks;
   uniform sampler2D textureLinkRanges;
   uniform sampler2D textureTargetPositions;
@@ -242,6 +246,9 @@ var simplex = `
     vec3 p1 = getPosition( uv );
     vec3 v1 = getVelocity( uv );
 
+    float rangeStart = uBeginning * nodeAmount;
+    float rangeEnd   = uEnding   * nodeAmount;
+
     vec3 a = vec3( 0.0 ),
         b = vec3( 0.0 ),
         c = vec3( 0.0 );
@@ -255,7 +262,7 @@ var simplex = `
         break;
       }
       vec2 linkUV = getUVFromIndex( linkStart + i );
-      b += link( id1, linkUV );
+      b += link( id1, linkUV, rangeStart, rangeEnd );
     }
 
     for ( float i = 0.0; i < nodeAmount; i += 1.0 ) {
@@ -263,16 +270,18 @@ var simplex = `
       int id2 = getIndex( uv2 );
       vec3 v2 = getVelocity( uv2 );
       vec3 p2 = getPosition( uv2 );
-      c += charge( i, id1, p1, v1, id2, p2, v2 );
+      float id2InRange = step( rangeStart, i ) * ( 1.0 - step( rangeEnd, i ) );
+      c += charge( i, id1, p1, v1, id2, p2, v2 ) * id2InRange;
     }
 
-    b *= 1.0 - step( nodeAmount, float( id1 ) );
-    c *= 1.0 - step( nodeAmount, float( id1 ) );
+    float id1InRange = step( rangeStart, float( id1 ) ) * ( 1.0 - step( rangeEnd, float( id1 ) ) );
+    b *= id1InRange;
+    c *= id1InRange;
 
     // 4.
     vec4 targetTexel = texture2D( textureTargetPositions, uv );
     vec3 d = mix( center( p1 ), anchor( p1, targetTexel.xyz ), pinStrength * targetTexel.w );
-    vec3 acceleration = a + b + c + d;
+    vec3 acceleration = a + b + c + d * id1InRange;
 
     // Calculate Velocity
     vec3 velocity = ( v1 + ( acceleration * timeStep ) ) * damping * alpha;
@@ -299,6 +308,8 @@ var nested = `
   uniform float stiffness;
   uniform float gravity;
   uniform float pinStrength;
+  uniform float uBeginning;
+  uniform float uEnding;
   uniform sampler2D textureLinks;
   uniform sampler2D textureLinksLookUp;
   uniform sampler2D textureTargetPositions;
@@ -322,6 +333,9 @@ var nested = `
     vec3 p1 = getPosition( uv );
     vec3 v1 = getVelocity( uv );
 
+    float rangeStart = uBeginning * nodeAmount;
+    float rangeEnd   = uEnding   * nodeAmount;
+
     vec3 a = vec3( 0.0 ),
         b = vec3( 0.0 ),
         c = vec3( 0.0 );
@@ -329,7 +343,7 @@ var nested = `
     /*
     for ( float i = 0.0; i < linkAmount; i += 1.0 ) {
       // TODO: get all edges and link them
-      b += link( id1, uv2 );
+      b += link( id1, uv2, rangeStart, rangeEnd );
     }
     */
 
@@ -344,19 +358,21 @@ var nested = `
       vec3 v2 = getVelocity( uv2 );
       vec3 p2 = getPosition( uv2 );
 
+      float id2InRange = step( rangeStart, i ) * ( 1.0 - step( rangeEnd, i ) );
       if ( i < nodeAmount) {
-        c += charge( i, id1, p1, v1, id2, p2, v2 );
+        c += charge( i, id1, p1, v1, id2, p2, v2 ) * id2InRange;
       }
 
     }
 
-    b *= 1.0 - step( edgeAmount, float( id1 ) );
-    c *= 1.0 - step( nodeAmount, float( id1 ) );
+    float id1InRange = step( rangeStart, float( id1 ) ) * ( 1.0 - step( rangeEnd, float( id1 ) ) );
+    b *= id1InRange;
+    c *= id1InRange;
 
   // 4.
   vec4 targetTexel = texture2D( textureTargetPositions, uv );
   vec3 d = mix( center( p1 ), anchor( p1, targetTexel.xyz ), pinStrength * targetTexel.w );
-  vec3 acceleration = a + b + c + d;
+  vec3 acceleration = a + b + c + d * id1InRange;
 
   // Calculate Velocity
   vec3 velocity = ( v1 + ( acceleration * timeStep ) ) * damping * alpha;
@@ -397,6 +413,9 @@ var points = {
     uniform float is2D;
     uniform float nodeRadius;
     uniform float nodeScale;
+    uniform float uBeginning;
+    uniform float uEnding;
+    uniform float uNodeAmount;
     uniform sampler2D texturePositions;
     uniform sampler2D textureTargetPositions;
 
@@ -411,6 +430,17 @@ var points = {
     attribute float pointSize;
 
     void main() {
+
+      float nodeIndex  = position.z - 1.0;
+      float rangeStart = uBeginning * uNodeAmount;
+      float rangeEnd   = uEnding   * uNodeAmount;
+      float inRange    = step( rangeStart, nodeIndex ) * ( 1.0 - step( rangeEnd, nodeIndex ) );
+
+      if ( inRange < 0.5 ) {
+        gl_PointSize = 0.0;
+        gl_Position  = vec4( 0.0, 0.0, 10000.0, 1.0 );
+        return;
+      }
 
       vec4 texel = texture2D( texturePositions, position.xy );
       vec3 vPosition = texel.xyz;
@@ -624,7 +654,10 @@ var Points = class extends BasePoints {
         size: uniforms.size,
         opacity: uniforms.opacity,
         uColor: uniforms.pointColor,
-        inheritColors: uniforms.pointsInheritColor
+        inheritColors: uniforms.pointsInheritColor,
+        uBeginning: uniforms.uBeginning,
+        uEnding: uniforms.uEnding,
+        uNodeAmount: uniforms.uNodeAmount
       } },
       vertexShader: points_default.vertexShader,
       fragmentShader: points_default.fragmentShader,
@@ -697,11 +730,28 @@ var links = {
     #include <fog_pars_vertex>
 
     uniform float is2D;
+    uniform float uBeginning;
+    uniform float uEnding;
+    uniform float uNodeAmount;
     uniform sampler2D texturePositions;
+
+    attribute float partnerIndex;
 
     varying vec3 vColor;
 
     void main() {
+
+      float ownIndex      = position.z - 1.0;
+      float partnerIdx    = partnerIndex - 1.0;
+      float rangeStart    = uBeginning * uNodeAmount;
+      float rangeEnd      = uEnding   * uNodeAmount;
+      float ownInRange     = step( rangeStart, ownIndex )   * ( 1.0 - step( rangeEnd, ownIndex ) );
+      float partnerInRange = step( rangeStart, partnerIdx ) * ( 1.0 - step( rangeEnd, partnerIdx ) );
+
+      if ( ownInRange * partnerInRange < 0.5 ) {
+        gl_Position = vec4( 0.0, 0.0, 10000.0, 1.0 );
+        return;
+      }
 
       vec3 vPosition = texture2D( texturePositions, position.xy ).xyz;
       vPosition.z *= 1.0 - is2D;
@@ -740,7 +790,10 @@ var Links = class extends LineSegments {
         inheritColors: uniforms.linksInheritColor,
         opacity: uniforms.opacity,
         texturePositions: { value: null },
-        uColor: uniforms.linkColor
+        uColor: uniforms.linkColor,
+        uBeginning: uniforms.uBeginning,
+        uEnding: uniforms.uEnding,
+        uNodeAmount: uniforms.uNodeAmount
       } },
       vertexShader: links_default.vertexShader,
       fragmentShader: links_default.fragmentShader,
@@ -755,6 +808,7 @@ var Links = class extends LineSegments {
     const geometry = new BufferGeometry2();
     const vertices = [];
     const colors = [];
+    const partnerIndices = [];
     const v = points2.geometry.attributes.position.array;
     const c = points2.geometry.attributes.color.array;
     return each(data.links, (_, i) => {
@@ -769,6 +823,7 @@ var Links = class extends LineSegments {
       let b = c[si + 2];
       vertices.push(x, y, z);
       colors.push(r, g, b);
+      partnerIndices.push(v[ti + 2]);
       x = v[ti + 0];
       y = v[ti + 1];
       z = v[ti + 2];
@@ -777,6 +832,7 @@ var Links = class extends LineSegments {
       b = c[ti + 2];
       vertices.push(x, y, z);
       colors.push(r, g, b);
+      partnerIndices.push(v[si + 2]);
     }).then(() => {
       geometry.setAttribute(
         "position",
@@ -785,6 +841,10 @@ var Links = class extends LineSegments {
       geometry.setAttribute(
         "color",
         new Float32BufferAttribute2(colors, 3)
+      );
+      geometry.setAttribute(
+        "partnerIndex",
+        new Float32BufferAttribute2(partnerIndices, 1)
       );
       return geometry;
     });
@@ -832,6 +892,9 @@ var hit = {
     uniform float nodeRadius;
     uniform float nodeScale;
     uniform float hitScale;
+    uniform float uBeginning;
+    uniform float uEnding;
+    uniform float uNodeAmount;
     uniform sampler2D texturePositions;
 
     attribute float pointSize;
@@ -840,6 +903,17 @@ var hit = {
     varying float vDistance;
 
     void main() {
+
+      float nodeIndex  = position.z - 1.0;
+      float rangeStart = uBeginning * uNodeAmount;
+      float rangeEnd   = uEnding   * uNodeAmount;
+      float inRange    = step( rangeStart, nodeIndex ) * ( 1.0 - step( rangeEnd, nodeIndex ) );
+
+      if ( inRange < 0.5 ) {
+        gl_PointSize = 0.0;
+        gl_Position  = vec4( 0.0, 0.0, 10000.0, 1.0 );
+        return;
+      }
 
       vec4 texel = texture2D( texturePositions, position.xy );
       vec3 vPosition = texel.xyz;
@@ -1698,7 +1772,10 @@ var ForceDirectedGraph = class extends Group {
       pointsInheritColor: { value: true },
       pointColor: { value: new Color3(1, 1, 1) },
       linkColor: { value: new Color3(1, 1, 1) },
-      opacity: { value: 1 }
+      opacity: { value: 1 },
+      uBeginning: { value: 0 },
+      uEnding: { value: 1 },
+      uNodeAmount: { value: 0 }
     };
     this.userData.hit = new Hit(this);
     this.userData.workerManager = new TextureWorkerManager();
@@ -1896,6 +1973,9 @@ var ForceDirectedGraph = class extends Group {
         variables.velocities.material.uniforms.nodeAmount = {
           value: data.nodes.length
         };
+        variables.velocities.material.uniforms.uBeginning = uniforms.uBeginning;
+        variables.velocities.material.uniforms.uEnding = uniforms.uEnding;
+        uniforms.uNodeAmount.value = data.nodes.length;
         variables.velocities.material.uniforms.edgeAmount = {
           value: packedLinkAmount
         };
@@ -2243,6 +2323,18 @@ var ForceDirectedGraph = class extends Group {
   }
   set opacity(v) {
     this.userData.uniforms.opacity.value = v;
+  }
+  get beginning() {
+    return this.userData.uniforms.uBeginning.value;
+  }
+  set beginning(v) {
+    this.userData.uniforms.uBeginning.value = v;
+  }
+  get ending() {
+    return this.userData.uniforms.uEnding.value;
+  }
+  set ending(v) {
+    this.userData.uniforms.uEnding.value = v;
   }
   get blending() {
     return this.children[0].material.blending;

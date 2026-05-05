@@ -30,7 +30,10 @@ class Points extends BasePoints {
         size: uniforms.size,
         opacity: uniforms.opacity,
         uColor: uniforms.pointColor,
-        inheritColors: uniforms.pointsInheritColor
+        inheritColors: uniforms.pointsInheritColor,
+        uBeginning: uniforms.uBeginning,
+        uEnding: uniforms.uEnding,
+        uNodeAmount: uniforms.uNodeAmount,
       } },
       vertexShader: shader.vertexShader,
       fragmentShader: shader.fragmentShader,

@@ -106,7 +106,7 @@ export const jiggle = `
  * - float springLength: number
  */
 export const link = `
-  vec3 link( int id1, vec2 uv2 ) {
+  vec3 link( int id1, vec2 uv2, float rangeStart, float rangeEnd ) {
 
     vec3 result = vec3( 0.0 );
 
@@ -145,7 +145,9 @@ export const link = `
 
     result.z *= 1.0 - is2D;
 
-    return result;
+    float siInRange = step( rangeStart, siF ) * ( 1.0 - step( rangeEnd, siF ) );
+    float tiInRange = step( rangeStart, tiF ) * ( 1.0 - step( rangeEnd, tiF ) );
+    return result * siInRange * tiInRange;
 
   }
 `;
