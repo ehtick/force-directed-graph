@@ -12,11 +12,14 @@ const points = {
     uniform float nodeRadius;
     uniform float nodeScale;
     uniform sampler2D texturePositions;
+    uniform sampler2D textureTargetPositions;
 
     varying vec3 vColor;
     varying float vImageKey;
     varying float vDistance;
     varying float vViewZ;
+    varying vec3 vTargetPosition;
+    varying float vHasTarget;
 
     attribute float imageKey;
     attribute float pointSize;
@@ -26,6 +29,10 @@ const points = {
       vec4 texel = texture2D( texturePositions, position.xy );
       vec3 vPosition = texel.xyz;
       vPosition.z *= 1.0 - is2D;
+
+      vec4 targetTexel = texture2D( textureTargetPositions, position.xy );
+      vTargetPosition = targetTexel.xyz;
+      vHasTarget = targetTexel.w;
 
       vec4 mvPosition = modelViewMatrix * vec4( vPosition, 1.0 );
 

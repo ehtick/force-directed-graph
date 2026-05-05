@@ -218,6 +218,11 @@ var center = `
     return - p1 * gravity * 0.1;
   }
 `;
+var anchor = `
+  vec3 anchor( vec3 p1, vec3 target ) {
+    return ( target - p1 ) * gravity * 0.1;
+  }
+`;
 
 // src/shaders/velocities.js
 var types = ["simplex", "nested"];
@@ -236,8 +241,10 @@ var simplex = `
   uniform float springLength;
   uniform float stiffness;
   uniform float gravity;
+  uniform float pinStrength;
   uniform sampler2D textureLinks;
   uniform sampler2D textureLinkRanges;
+  uniform sampler2D textureTargetPositions;
 
   ${getPosition}
   ${getVelocity}
@@ -248,6 +255,7 @@ var simplex = `
   ${link}
   ${charge}
   ${center}
+  ${anchor}
 
   void main() {
 
@@ -285,7 +293,8 @@ var simplex = `
     c *= 1.0 - step( nodeAmount, float( id1 ) );
 
     // 4.
-    vec3 d = center( p1 );
+    vec4 targetTexel = texture2D( textureTargetPositions, uv );
+    vec3 d = mix( center( p1 ), anchor( p1, targetTexel.xyz ), pinStrength * targetTexel.w );
     vec3 acceleration = a + b + c + d;
 
     // Calculate Velocity
@@ -312,8 +321,10 @@ var nested = `
   uniform float springLength;
   uniform float stiffness;
   uniform float gravity;
+  uniform float pinStrength;
   uniform sampler2D textureLinks;
   uniform sampler2D textureLinksLookUp;
+  uniform sampler2D textureTargetPositions;
 
   ${getPosition}
   ${getVelocity}
@@ -324,6 +335,7 @@ var nested = `
   ${link}
   ${charge}
   ${center}
+  ${anchor}
 
   void main() {
 
@@ -365,7 +377,8 @@ var nested = `
     c *= 1.0 - step( nodeAmount, float( id1 ) );
 
   // 4.
-  vec3 d = center( p1 );
+  vec4 targetTexel = texture2D( textureTargetPositions, uv );
+  vec3 d = mix( center( p1 ), anchor( p1, targetTexel.xyz ), pinStrength * targetTexel.w );
   vec3 acceleration = a + b + c + d;
 
   // Calculate Velocity
@@ -401,13 +414,17 @@ var points = {
     uniform float nodeRadius;
     uniform float nodeScale;
     uniform sampler2D texturePositions;
+    uniform sampler2D textureTargetPositions;
 
     varying vec3 vColor;
     varying float vImageKey;
     varying float vDistance;
     varying float vViewZ;
+    varying vec3 vTargetPosition;
+    varying float vHasTarget;
 
     attribute float imageKey;
+    attribute float pointSize;
 
     void main() {
 
@@ -415,9 +432,13 @@ var points = {
       vec3 vPosition = texel.xyz;
       vPosition.z *= 1.0 - is2D;
 
+      vec4 targetTexel = texture2D( textureTargetPositions, position.xy );
+      vTargetPosition = targetTexel.xyz;
+      vHasTarget = targetTexel.w;
+
       vec4 mvPosition = modelViewMatrix * vec4( vPosition, 1.0 );
 
-      gl_PointSize = nodeRadius * nodeScale;
+      gl_PointSize = nodeRadius * pointSize * nodeScale;
       gl_PointSize *= mix( 1.0, frustumSize / - mvPosition.z, sizeAttenuation );
 
       vDistance = 1.0 / - mvPosition.z;
@@ -511,22 +532,22 @@ var points_default = points;
 
 // src/texture-atlas.js
 var import_three = require("three");
-var anchor;
+var anchor2;
 var TextureAtlas = class _TextureAtlas extends import_three.Texture {
   map = [];
   dimensions = 1;
   isTextureAtlas = true;
   constructor() {
-    if (!anchor) {
-      anchor = document.createElement("a");
+    if (!anchor2) {
+      anchor2 = document.createElement("a");
     }
     super(document.createElement("canvas"));
     this.flipY = false;
   }
   static Resolution = 1024;
   static getAbsoluteURL(path) {
-    anchor.href = path;
-    return anchor.href;
+    anchor2.href = path;
+    return anchor2.href;
   }
   add(src) {
     const scope = this;
@@ -614,6 +635,7 @@ var Points = class extends import_three2.Points {
         nodeScale: uniforms.nodeScale,
         imageDimensions: { value: atlas.dimensions },
         texturePositions: { value: null },
+        textureTargetPositions: { value: null },
         textureAtlas: { value: atlas },
         size: uniforms.size,
         opacity: uniforms.opacity,
@@ -634,6 +656,7 @@ var Points = class extends import_three2.Points {
     const vertices = [];
     const colors = [];
     const imageKeys = [];
+    const sizes = [];
     return each(data.nodes, (_, i) => {
       const node = data.nodes[i];
       const x = i % size2 / size2;
@@ -651,6 +674,7 @@ var Points = class extends import_three2.Points {
       } else {
         imageKeys.push(-1);
       }
+      sizes.push(node.size != null ? node.size : 1);
     }).then(() => {
       const geometry = new import_three2.BufferGeometry();
       geometry.setAttribute(
@@ -664,6 +688,10 @@ var Points = class extends import_three2.Points {
       geometry.setAttribute(
         "imageKey",
         new import_three2.Float32BufferAttribute(imageKeys, 1)
+      );
+      geometry.setAttribute(
+        "pointSize",
+        new import_three2.Float32BufferAttribute(sizes, 1)
       );
       return { atlas, geometry };
     });
@@ -810,6 +838,8 @@ var hit = {
     uniform float hitScale;
     uniform sampler2D texturePositions;
 
+    attribute float pointSize;
+
     varying vec3 vColor;
     varying float vDistance;
 
@@ -821,7 +851,7 @@ var hit = {
 
       vec4 mvPosition = modelViewMatrix * vec4( vPosition, 1.0 );
 
-      gl_PointSize = nodeRadius * nodeScale;
+      gl_PointSize = nodeRadius * pointSize * nodeScale;
       gl_PointSize *= mix( 1.0, frustumSize / - mvPosition.z, sizeAttenuation );
       gl_PointSize *= hitScale;
 
@@ -1664,6 +1694,7 @@ var ForceDirectedGraph = class extends import_three5.Group {
       springLength: { value: 2 },
       stiffness: { value: 0.1 },
       gravity: { value: 0.1 },
+      pinStrength: { value: 0 },
       nodeRadius: { value: 1 },
       nodeScale: { value: 8 },
       sizeAttenuation: { value: true },
@@ -1694,6 +1725,7 @@ var ForceDirectedGraph = class extends import_three5.Group {
     "springLength",
     "stiffness",
     "gravity",
+    "pinStrength",
     "nodeRadius",
     "nodeScale",
     "sizeAttenuation",
@@ -1743,7 +1775,8 @@ var ForceDirectedGraph = class extends import_three5.Group {
       positions: gpgpu.createTexture(),
       velocities: gpgpu.createTexture(),
       links: gpgpu.createTexture(),
-      linkRanges: gpgpu.createTexture()
+      linkRanges: gpgpu.createTexture(),
+      targetPositions: gpgpu.createTexture()
     };
     const variables = {
       positions: gpgpu.addVariable(
@@ -1759,6 +1792,7 @@ var ForceDirectedGraph = class extends import_three5.Group {
     };
     this.userData.gpgpu = gpgpu;
     this.userData.variables = variables;
+    this.userData.textures = textures;
     return register().then(fill).then(setup).then(generate).then(complete).catch((error) => {
       console.warn("Force Directed Graph:", error);
     });
@@ -1795,6 +1829,7 @@ var ForceDirectedGraph = class extends import_three5.Group {
           textures.links.image.data.set(result.links);
           textures.linkRanges.image.data.set(result.linkRanges);
           packedLinkAmount = result.packedLinkAmount;
+          fillTargetPositions();
           console.log(`Texture processing completed in ${result.processingTime.toFixed(2)}ms using ${workerManager.isWasmAvailable() ? "WASM" : "JavaScript"}`);
           return Promise.resolve();
         } catch (error) {
@@ -1829,7 +1864,22 @@ var ForceDirectedGraph = class extends import_three5.Group {
           textures.positions.image.data[i + 2] = uniforms.frustumSize.value * 10;
           textures.positions.image.data[i + 3] = uniforms.frustumSize.value * 10;
         }
-      }, 4);
+      }, 4).then(fillTargetPositions);
+    }
+    function fillTargetPositions() {
+      for (let k = 0; k < data.nodes.length; k++) {
+        const node = data.nodes[k];
+        const i = k * 4;
+        const hasX = typeof node.x !== "undefined";
+        const hasY = typeof node.y !== "undefined";
+        const hasZ = typeof node.z !== "undefined";
+        const definedCount = (hasX ? 1 : 0) + (hasY ? 1 : 0) + (hasZ ? 1 : 0);
+        const hasTarget = definedCount >= 2 ? 1 : 0;
+        textures.targetPositions.image.data[i + 0] = hasTarget ? node.x ?? 0 : 0;
+        textures.targetPositions.image.data[i + 1] = hasTarget ? node.y ?? 0 : 0;
+        textures.targetPositions.image.data[i + 2] = hasTarget ? node.z ?? 0 : 0;
+        textures.targetPositions.image.data[i + 3] = hasTarget;
+      }
     }
     function setup() {
       return new Promise((resolve, reject) => {
@@ -1867,6 +1917,10 @@ var ForceDirectedGraph = class extends import_three5.Group {
         variables.velocities.material.uniforms.springLength = uniforms.springLength;
         variables.velocities.material.uniforms.stiffness = uniforms.stiffness;
         variables.velocities.material.uniforms.gravity = uniforms.gravity;
+        variables.velocities.material.uniforms.pinStrength = uniforms.pinStrength;
+        variables.velocities.material.uniforms.textureTargetPositions = {
+          value: textures.targetPositions
+        };
         variables.positions.wrapS = variables.positions.wrapT = import_three5.RepeatWrapping;
         variables.velocities.wrapS = variables.velocities.wrapT = import_three5.RepeatWrapping;
         const error = gpgpu.init();
@@ -1904,7 +1958,7 @@ var ForceDirectedGraph = class extends import_three5.Group {
     if (!this.ready) {
       return this;
     }
-    const { gpgpu, variables, uniforms } = this.userData;
+    const { gpgpu, textures, variables, uniforms } = this.userData;
     uniforms.alpha.value *= uniforms.decay.value;
     variables.velocities.material.uniforms.time.value = time / 1e3;
     gpgpu.compute();
@@ -1912,6 +1966,9 @@ var ForceDirectedGraph = class extends import_three5.Group {
     for (let i = 0; i < this.children.length; i++) {
       const child = this.children[i];
       child.material.uniforms.texturePositions.value = texture;
+      if (child.material.uniforms.textureTargetPositions) {
+        child.material.uniforms.textureTargetPositions.value = textures.targetPositions;
+      }
     }
     return this;
   }
@@ -2125,6 +2182,12 @@ var ForceDirectedGraph = class extends import_three5.Group {
   }
   set gravity(v) {
     this.userData.uniforms.gravity.value = v;
+  }
+  get pinStrength() {
+    return this.userData.uniforms.pinStrength.value;
+  }
+  set pinStrength(v) {
+    this.userData.uniforms.pinStrength.value = v;
   }
   get nodeRadius() {
     return this.userData.uniforms.nodeRadius.value;

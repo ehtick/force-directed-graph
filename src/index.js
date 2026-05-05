@@ -109,6 +109,7 @@ class ForceDirectedGraph extends Group {
       springLength: { value: 2 },
       stiffness: { value: 0.1 },
       gravity: { value: 0.1 },
+      pinStrength: { value: 0.0 },
       nodeRadius: { value: 1 },
       nodeScale: { value: 8 },
       sizeAttenuation: { value: true },
@@ -141,6 +142,7 @@ class ForceDirectedGraph extends Group {
     'springLength',
     'stiffness',
     'gravity',
+    'pinStrength',
     'nodeRadius',
     'nodeScale',
     'sizeAttenuation',
@@ -204,6 +206,7 @@ class ForceDirectedGraph extends Group {
       velocities: gpgpu.createTexture(),
       links: gpgpu.createTexture(),
       linkRanges: gpgpu.createTexture(),
+      targetPositions: gpgpu.createTexture(),
     };
 
     const variables = {
@@ -221,6 +224,7 @@ class ForceDirectedGraph extends Group {
 
     this.userData.gpgpu = gpgpu;
     this.userData.variables = variables;
+    this.userData.textures = textures;
 
     return (
       register()
@@ -276,9 +280,10 @@ class ForceDirectedGraph extends Group {
           textures.links.image.data.set(result.links);
           textures.linkRanges.image.data.set(result.linkRanges);
           packedLinkAmount = result.packedLinkAmount;
-          
+          fillTargetPositions();
+
           console.log(`Texture processing completed in ${result.processingTime.toFixed(2)}ms using ${workerManager.isWasmAvailable() ? 'WASM' : 'JavaScript'}`);
-          
+
           return Promise.resolve();
         } catch (error) {
           console.warn('Worker processing failed, falling back to main thread:', error);
@@ -323,7 +328,23 @@ class ForceDirectedGraph extends Group {
           textures.positions.image.data[i + 2] = uniforms.frustumSize.value * 10;
           textures.positions.image.data[i + 3] = uniforms.frustumSize.value * 10;
         }
-      }, 4);
+      }, 4).then(fillTargetPositions);
+    }
+
+    function fillTargetPositions() {
+      for (let k = 0; k < data.nodes.length; k++) {
+        const node = data.nodes[k];
+        const i = k * 4;
+        const hasX = typeof node.x !== 'undefined';
+        const hasY = typeof node.y !== 'undefined';
+        const hasZ = typeof node.z !== 'undefined';
+        const definedCount = (hasX ? 1 : 0) + (hasY ? 1 : 0) + (hasZ ? 1 : 0);
+        const hasTarget = definedCount >= 2 ? 1.0 : 0.0;
+        textures.targetPositions.image.data[i + 0] = hasTarget ? (node.x ?? 0) : 0;
+        textures.targetPositions.image.data[i + 1] = hasTarget ? (node.y ?? 0) : 0;
+        textures.targetPositions.image.data[i + 2] = hasTarget ? (node.z ?? 0) : 0;
+        textures.targetPositions.image.data[i + 3] = hasTarget;
+      }
     }
 
     function setup() {
@@ -365,6 +386,10 @@ class ForceDirectedGraph extends Group {
           uniforms.springLength;
         variables.velocities.material.uniforms.stiffness = uniforms.stiffness;
         variables.velocities.material.uniforms.gravity = uniforms.gravity;
+        variables.velocities.material.uniforms.pinStrength = uniforms.pinStrength;
+        variables.velocities.material.uniforms.textureTargetPositions = {
+          value: textures.targetPositions,
+        };
 
         variables.positions.wrapS = variables.positions.wrapT = RepeatWrapping;
         variables.velocities.wrapS = variables.velocities.wrapT =
@@ -413,7 +438,7 @@ class ForceDirectedGraph extends Group {
       return this;
     }
 
-    const { gpgpu, variables, uniforms } = this.userData;
+    const { gpgpu, textures, variables, uniforms } = this.userData;
 
     uniforms.alpha.value *= uniforms.decay.value;
 
@@ -425,6 +450,10 @@ class ForceDirectedGraph extends Group {
     for (let i = 0; i < this.children.length; i++) {
       const child = this.children[i];
       child.material.uniforms.texturePositions.value = texture;
+      if (child.material.uniforms.textureTargetPositions) {
+        child.material.uniforms.textureTargetPositions.value =
+          textures.targetPositions;
+      }
     }
 
     return this;
@@ -670,6 +699,12 @@ class ForceDirectedGraph extends Group {
   }
   set gravity(v) {
     this.userData.uniforms.gravity.value = v;
+  }
+  get pinStrength() {
+    return this.userData.uniforms.pinStrength.value;
+  }
+  set pinStrength(v) {
+    this.userData.uniforms.pinStrength.value = v;
   }
   get nodeRadius() {
     return this.userData.uniforms.nodeRadius.value;

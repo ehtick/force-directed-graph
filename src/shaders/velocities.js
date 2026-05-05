@@ -7,7 +7,8 @@ import {
   jiggle,
   link,
   charge,
-  center
+  center,
+  anchor
 } from "./partials.js";
 
 export const types = ["simplex", "nested"];
@@ -30,8 +31,10 @@ export const simplex = `
   uniform float springLength;
   uniform float stiffness;
   uniform float gravity;
+  uniform float pinStrength;
   uniform sampler2D textureLinks;
   uniform sampler2D textureLinkRanges;
+  uniform sampler2D textureTargetPositions;
 
   ${getPosition}
   ${getVelocity}
@@ -42,6 +45,7 @@ export const simplex = `
   ${link}
   ${charge}
   ${center}
+  ${anchor}
 
   void main() {
 
@@ -79,7 +83,8 @@ export const simplex = `
     c *= 1.0 - step( nodeAmount, float( id1 ) );
 
     // 4.
-    vec3 d = center( p1 );
+    vec4 targetTexel = texture2D( textureTargetPositions, uv );
+    vec3 d = mix( center( p1 ), anchor( p1, targetTexel.xyz ), pinStrength * targetTexel.w );
     vec3 acceleration = a + b + c + d;
 
     // Calculate Velocity
@@ -107,8 +112,10 @@ export const nested = `
   uniform float springLength;
   uniform float stiffness;
   uniform float gravity;
+  uniform float pinStrength;
   uniform sampler2D textureLinks;
   uniform sampler2D textureLinksLookUp;
+  uniform sampler2D textureTargetPositions;
 
   ${getPosition}
   ${getVelocity}
@@ -119,6 +126,7 @@ export const nested = `
   ${link}
   ${charge}
   ${center}
+  ${anchor}
 
   void main() {
 
@@ -160,7 +168,8 @@ export const nested = `
     c *= 1.0 - step( nodeAmount, float( id1 ) );
 
   // 4.
-  vec3 d = center( p1 );
+  vec4 targetTexel = texture2D( textureTargetPositions, uv );
+  vec3 d = mix( center( p1 ), anchor( p1, targetTexel.xyz ), pinStrength * targetTexel.w );
   vec3 acceleration = a + b + c + d;
 
   // Calculate Velocity

@@ -25,6 +25,7 @@ class Points extends BasePoints {
         nodeScale: uniforms.nodeScale,
         imageDimensions: { value: atlas.dimensions},
         texturePositions: { value: null },
+        textureTargetPositions: { value: null },
         textureAtlas: { value: atlas },
         size: uniforms.size,
         opacity: uniforms.opacity,

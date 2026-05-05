@@ -65,6 +65,14 @@ declare module '@jonobr1/force-directed-graph/shaders/partials' {
    * - float gravity: number
    */
   export const center: '\n  vec3 center( vec3 p1 ) {\n    return - p1 * gravity * 0.1;\n  }\n';
+  /**
+   * Attracts a node toward its supplied target position,
+   * using the same gravity scaling as center().
+   *
+   * Relies on uniforms:
+   * - float gravity: number
+   */
+  export const anchor: '\n  vec3 anchor( vec3 p1, vec3 target ) {\n    return ( target - p1 ) * gravity * 0.1;\n  }\n';
 }
 declare module '@jonobr1/force-directed-graph/shaders/hit' {
   export default hit;
@@ -309,6 +317,8 @@ declare module '@jonobr1/force-directed-graph' {
     get stiffness(): number;
     set gravity(arg: number);
     get gravity(): number;
+    set pinStrength(arg: number);
+    get pinStrength(): number;
     set nodeRadius(arg: number);
     get nodeRadius(): number;
     set nodeScale(arg: number);

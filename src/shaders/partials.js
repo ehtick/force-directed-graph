@@ -186,12 +186,25 @@ export const charge = `
  * Attracts (or not) a node to the
  * center of the force directed graph
  * by how much gravity there is.
- * 
+ *
  * Relies on uniforms:
  * - float gravity: number
  */
 export const center = `
   vec3 center( vec3 p1 ) {
     return - p1 * gravity * 0.1;
+  }
+`;
+
+/**
+ * Attracts a node toward its supplied target position,
+ * using the same gravity scaling as center().
+ *
+ * Relies on uniforms:
+ * - float gravity: number
+ */
+export const anchor = `
+  vec3 anchor( vec3 p1, vec3 target ) {
+    return ( target - p1 ) * gravity * 0.1;
   }
 `;
