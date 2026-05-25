@@ -410,7 +410,8 @@
           fdg.pointColor.setRGB(0.3, 0.3, 0.3);
           fdg.linkColor.setRGB(0.9, 0.9, 0.9);
           fdg.labelColor.setRGB(0, 0, 0);
-          fdg.obscurity = 1;
+          fdg.obscurity = 0.9;
+          fdg.labels.visible = false;
           fdg.pointsInheritColor = false;
 
           gui.close();
@@ -476,7 +477,11 @@
           folders.labels.add(fdg, 'labelsInheritColor').name('inheritColor');
           folders.labels.addColor(fdg, 'labelColor').name('color');
           folders.labels
-            .add(fdg.labels, 'fontFamily', ['serif', 'sans-serif', 'monospace'])
+            .add(fdg.labels, 'fontFamily', [
+              'Arial, sans-serif',
+              'Times, serif',
+              'monospace',
+            ])
             .name('fontFamily');
           folders.labels
             .add(fdg.labels, 'fontSize', 1, 100, 1)
