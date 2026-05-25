@@ -439,7 +439,6 @@
             { name: 'beginning', min: 0, max: 1, step: 0.01 },
             { name: 'ending', min: 0, max: 1, step: 0.01 },
             { name: 'opacity', min: 0, max: 1, step: 0.1 },
-            { name: 'obscurity', min: 0, max: 1, step: 0.01 },
           ].forEach(function ({ name, min, max, step }) {
             gui.add(fdg, name, min, max, step).name(name).onChange(reset);
           });
@@ -474,6 +473,7 @@
             .name('cap');
 
           folders.labels.add(fdg.labels, 'visible').name('visible');
+          folders.labels.add(fdg, 'obscurity', 0, 1, 0.01).name('obscurity');
           folders.labels.add(fdg, 'labelsInheritColor').name('inheritColor');
           folders.labels.addColor(fdg, 'labelColor').name('color');
           folders.labels
