@@ -1075,7 +1075,7 @@ var labels = {
       float beyondNear = 1.0 - step( viewDistance, max( labelNear, 0.0 ) );
       inRange *= beyondNear;
 
-      // Billboard: extract camera right and up from the view matrix columns
+      // Billboard: extract camera right and up from the corresponding view matrix rows
       vec3 right = normalize( vec3( viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0] ) );
       vec3 up    = normalize( vec3( viewMatrix[0][1], viewMatrix[1][1], viewMatrix[2][1] ) );
 
@@ -1138,6 +1138,12 @@ var labels = {
         alpha
       );
       #include <fog_fragment>
+
+      #ifdef USE_FOG
+      if ( fogFactor > 0.5 ) {
+        discard;
+      }
+      #endif
     }
   `
 };
@@ -1155,6 +1161,7 @@ var MV_CENTER = new import_three4.Vector4();
 var BASE_ATLAS_FONT_SIZE = 120;
 var BASE_ATLAS_PADDING = 4;
 var ATLAS_RASTER_SCALE = 2;
+var DEFAULT_MAX_LABEL_CANVAS_SIZE = 4096;
 var DEFAULT_FONT_FAMILY = "Arial, sans-serif";
 var LABEL_GRAPH_DISTANCE_HOPS = 6;
 var LABEL_NODE_COLOR = new import_three4.Color();
@@ -1197,6 +1204,23 @@ function sanitizeLabelNearDistance(nearDistance) {
     return 0;
   }
   return Math.max(0, nearDistance);
+}
+function sanitizePositiveInteger(value, fallback) {
+  if (!Number.isFinite(value) || value <= 0) {
+    return fallback;
+  }
+  return Math.max(1, Math.floor(value));
+}
+function getLabelAtlasMaxTextureSize(options = {}) {
+  const rendererMaxTextureSize = sanitizePositiveInteger(
+    options.maxTextureSize,
+    16384
+  );
+  const canvasMaxTextureSize = sanitizePositiveInteger(
+    options.maxCanvasTextureSize,
+    DEFAULT_MAX_LABEL_CANVAS_SIZE
+  );
+  return Math.min(rendererMaxTextureSize, canvasMaxTextureSize);
 }
 function getNodeColorComponents(node) {
   if (node?.color) {
@@ -1415,7 +1439,7 @@ function buildTextAtlas(nodes, degrees = [], options = {}) {
     Math.round(BASE_ATLAS_FONT_SIZE * fontScale * atlasScale)
   );
   const fontFamily = options.fontFamily || DEFAULT_FONT_FAMILY;
-  const maxTextureSize = Math.max(1, options.maxTextureSize || 16384);
+  const maxTextureSize = getLabelAtlasMaxTextureSize(options);
   const textColor = "#fff";
   const temp = document.createElement("canvas");
   const tempCtx = temp.getContext("2d");
@@ -2985,8 +3009,7 @@ var ForceDirectedGraph = class extends import_three6.Group {
       adjacency: nodeAdjacency || [],
       degrees: nodeDegrees || [],
       fontFamily: labelFontFamily,
-      maxTextureSize: renderer?.capabilities?.maxTextureSize || 16384,
-      useMipmaps: renderer?.capabilities?.isWebGL2 === true
+      maxTextureSize: renderer?.capabilities?.maxTextureSize || 16384
     };
   }
   refreshLabels() {

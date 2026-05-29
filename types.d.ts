@@ -68,6 +68,7 @@ declare namespace ForceDirectedGraphTypes {
     fontSize?: number;
     fontFamily?: string;
     maxTextureSize?: number;
+    maxCanvasTextureSize?: number;
     useMipmaps?: boolean;
   }
 
@@ -436,6 +437,7 @@ declare module '@jonobr1/force-directed-graph/labels' {
     getNodeColorComponents(
       node: ForceDirectedGraphTypes.NodeData,
     ): [number, number, number];
+    getLabelAtlasMaxTextureSize(options?: LabelParseOptions): number;
     sanitizeLabelFontSize(fontSize: number): number;
     sanitizeLabelNearDistance(nearDistance: number): number;
     intersectsBounds(

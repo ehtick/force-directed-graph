@@ -27,6 +27,7 @@ const MV_CENTER = new Vector4();
 const BASE_ATLAS_FONT_SIZE = 120;
 const BASE_ATLAS_PADDING = 4;
 const ATLAS_RASTER_SCALE = 2;
+const DEFAULT_MAX_LABEL_CANVAS_SIZE = 4096;
 const DEFAULT_FONT_FAMILY = 'Arial, sans-serif';
 const LABEL_GRAPH_DISTANCE_HOPS = 6;
 const LABEL_NODE_COLOR = new Color();
@@ -73,6 +74,26 @@ function sanitizeLabelNearDistance(nearDistance) {
     return 0;
   }
   return Math.max(0, nearDistance);
+}
+
+function sanitizePositiveInteger(value, fallback) {
+  if (!Number.isFinite(value) || value <= 0) {
+    return fallback;
+  }
+  return Math.max(1, Math.floor(value));
+}
+
+function getLabelAtlasMaxTextureSize(options = {}) {
+  const rendererMaxTextureSize = sanitizePositiveInteger(
+    options.maxTextureSize,
+    16384,
+  );
+  const canvasMaxTextureSize = sanitizePositiveInteger(
+    options.maxCanvasTextureSize,
+    DEFAULT_MAX_LABEL_CANVAS_SIZE,
+  );
+
+  return Math.min(rendererMaxTextureSize, canvasMaxTextureSize);
 }
 
 function getNodeColorComponents(node) {
@@ -360,7 +381,7 @@ function buildTextAtlas(nodes, degrees = [], options = {}) {
     Math.round(BASE_ATLAS_FONT_SIZE * fontScale * atlasScale),
   );
   const fontFamily = options.fontFamily || DEFAULT_FONT_FAMILY;
-  const maxTextureSize = Math.max(1, options.maxTextureSize || 16384);
+  const maxTextureSize = getLabelAtlasMaxTextureSize(options);
   const textColor = '#fff';
 
   const temp = document.createElement('canvas');
@@ -998,6 +1019,7 @@ const __TEST__ = {
   getVisibleQuota,
   getPlacementTextureDimensions,
   getNodeColorComponents,
+  getLabelAtlasMaxTextureSize,
   sanitizeLabelFontSize,
   sanitizeLabelNearDistance,
   intersectsBounds,

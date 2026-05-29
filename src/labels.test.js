@@ -316,4 +316,23 @@ describe('label placement helpers', () => {
     expect(texture.generateMipmaps).toBe(true);
     expect(texture.needsUpdate).toBe(true);
   });
+
+  it('caps label atlas canvas dimensions for mobile-safe uploads', () => {
+    expect(
+      __TEST__.getLabelAtlasMaxTextureSize({
+        maxTextureSize: 16384,
+      }),
+    ).toBe(4096);
+    expect(
+      __TEST__.getLabelAtlasMaxTextureSize({
+        maxTextureSize: 2048,
+      }),
+    ).toBe(2048);
+    expect(
+      __TEST__.getLabelAtlasMaxTextureSize({
+        maxTextureSize: 16384,
+        maxCanvasTextureSize: 8192,
+      }),
+    ).toBe(8192);
+  });
 });

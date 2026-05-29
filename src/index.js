@@ -526,7 +526,6 @@ class ForceDirectedGraph extends Group {
       degrees: nodeDegrees || [],
       fontFamily: labelFontFamily,
       maxTextureSize: renderer?.capabilities?.maxTextureSize || 16384,
-      useMipmaps: renderer?.capabilities?.isWebGL2 === true,
     };
   }
 
