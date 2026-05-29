@@ -497,9 +497,7 @@ class ForceDirectedGraph extends Group {
           points.renderOrder = links.renderOrder + 1;
           scope.userData.hit.inherit(points);
         })
-        .then(() =>
-          Labels.parse(size, data, scope.getLabelParseOptions()),
-        )
+        .then(() => Labels.parse(size, data, scope.getLabelParseOptions()))
         .then((result) => {
           if (result) {
             const labels = new Labels(result, uniforms);
@@ -526,6 +524,7 @@ class ForceDirectedGraph extends Group {
       degrees: nodeDegrees || [],
       fontFamily: labelFontFamily,
       maxTextureSize: renderer?.capabilities?.maxTextureSize || 16384,
+      useMipmaps: renderer?.capabilities?.isWebGL2 === true,
     };
   }
 

@@ -2985,9 +2985,7 @@ var ForceDirectedGraph = class extends import_three6.Group {
         scope.add(points2, links2);
         points2.renderOrder = links2.renderOrder + 1;
         scope.userData.hit.inherit(points2);
-      }).then(
-        () => Labels.parse(size2, data, scope.getLabelParseOptions())
-      ).then((result) => {
+      }).then(() => Labels.parse(size2, data, scope.getLabelParseOptions())).then((result) => {
         if (result) {
           const labels2 = new Labels(result, uniforms);
           scope.userData.labels = labels2;
@@ -3009,7 +3007,8 @@ var ForceDirectedGraph = class extends import_three6.Group {
       adjacency: nodeAdjacency || [],
       degrees: nodeDegrees || [],
       fontFamily: labelFontFamily,
-      maxTextureSize: renderer?.capabilities?.maxTextureSize || 16384
+      maxTextureSize: renderer?.capabilities?.maxTextureSize || 16384,
+      useMipmaps: renderer?.capabilities?.isWebGL2 === true
     };
   }
   refreshLabels() {
